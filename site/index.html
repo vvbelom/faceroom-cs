@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<!-- Страница расшифровывает телефоны клиентов: чужие скрипты и отправка данных
+     куда-либо, кроме самого сайта, запрещены. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<title>FaceRoom · Кабинет управляющего</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <section id="gate" aria-labelledby="gateTitle">
+    <img class="logo" src="logo.png" alt="FaceRoom">
+    <h1 id="gateTitle">Кабинет управляющего</h1>
+    <p>Статистика студий: конверсия, звонки, переписки, отзывы</p>
+    <input id="pwd" type="password" placeholder="Пароль" autocomplete="current-password" aria-label="Пароль">
+    <button id="enter" class="btn-primary" type="button">Войти</button>
+    <div id="gateMsg" role="status" aria-live="polite"></div>
+  </section>
+
+  <main id="app" hidden>
+    <header class="top">
+      <img class="logo" src="logo.png" alt="FaceRoom">
+      <span class="title">Кабинет управляющего</span>
+      <div class="meta" id="updated"></div>
+    </header>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы"></nav>
+    <div class="filters" id="filters"></div>
+    <div id="content"></div>
+    <footer class="foot">
+      <button class="icon-btn" id="theme" type="button" aria-label="Сменить тему">◐ Тема</button>
+      <button class="icon-btn" id="logout" type="button">Выйти</button>
+    </footer>
+  </main>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+name: Публикация страницы
+
+# Страница собирается из двух частей:
+#   * site/ на ветке main — сама страница (этот репозиторий);
+#   * data.enc.json на ветке data — зашифрованные данные. Их каждое утро кладёт
+#     воркфлоу приватного репозитория с ботами и присылает сигнал data-updated.
+#
+# Данные лежат в отдельной ветке одним коммитом (её перезаписывают), чтобы
+# ежедневные файлы не копились в истории публичного репозитория.
+#
+# Выкладка идёт только с main: окружение github-pages разрешает деплой с неё.
+# repository_dispatch и schedule всегда запускаются на основной ветке.
+
+on:
+  push:
+    branches: [main]
+  repository_dispatch:
+    types: [data-updated]
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 8 * * *"      # 11:00 МСК — подстраховка, если сигнал не дошёл
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Взять данные из ветки data
+        run: |
+          if git ls-remote --exit-code --heads origin data > /dev/null; then
+            git fetch --depth=1 origin data
+            git show origin/data:data.enc.json > site/data.enc.json
+            echo "данные: $(wc -c < site/data.enc.json) байт"
+          else
+            echo "::warning::Ветки data пока нет — страница выйдет без данных"
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
