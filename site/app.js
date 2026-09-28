@@ -391,7 +391,9 @@ function viewConversion(root) {
   const excluded = c.excluded + m.excluded;
   const reasons = {};
   for (const t of [c, m]) for (const [k, n] of Object.entries(t.reasons)) reasons[k] = (reasons[k] || 0) + n;
-  const topReasons = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 2)
+  // Все причины, а не две самые частые: иначе число в плитке не сходится с
+  // расшифровкой под ним (37, а под ним 10 + 9).
+  const allReasons = Object.entries(reasons).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${REASONS[k] || k} ${n}`).join(", ");
   const firstPrimary = firstDayWith("calls", "primary");
   const firstExcl = [firstDayWith("calls", "no_booking_expected"), firstDayWith("messages", "no_booking_expected")]
@@ -410,7 +412,7 @@ function viewConversion(root) {
                 : "нет данных",
            delta: { now: pct(c.primaryBooked, c.primary), before: pct(cb.primaryBooked, cb.primary), unit: "pp", better: "up", label } }),
     tile({ label: "Не считали", value: String(excluded),
-           sub: excluded ? topReasons : "запись и не предполагалась" })));
+           sub: excluded ? allReasons : "запись и не предполагалась" })));
 
   const cd = chartDays();
   const series = ch => cd.map(d => {
