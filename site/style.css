@@ -20,6 +20,7 @@
   --calls: #2a78d6;             /* серия 1 — звонки */
   --messages: #eb6834;          /* серия 2 — переписки */
   --primary: #1baf7a;           /* серия 3 — первичные (контраст < 3:1 — у графиков есть таблица) */
+  --issue: #4a3aa7;             /* серия 7 — замечания; рядом со статусным красным «без ответа» */
   --neutral: #c3c2b7;           /* фон-серия (принято, 4–5★) */
   --bad: #d03b3b;               /* статус: пропущено, 1–3★ */
   --good-ink: #006300;
@@ -33,7 +34,7 @@
     --bg: #0f1115; --card: #1a1c21; --card-2: #20232a; --ink: #f2f3f5; --ink-2: #c3c2b7;
     --muted: #8d8f98; --line: #2a2d34; --axis: #3b3e46; --grid: #25282e;
     --accent: #5fb3cb; --accent-ink: #8fd0e2; --accent-soft: #16323b;
-    --calls: #3987e5; --messages: #d95926; --primary: #199e70; --neutral: #4a4d55; --bad: #d03b3b;
+    --calls: #3987e5; --messages: #d95926; --primary: #199e70; --issue: #9085e9; --neutral: #4a4d55; --bad: #d03b3b;
     --good-ink: #0ca30c; --bad-ink: #ef6b6b; --shadow: 0 10px 34px rgba(0, 0, 0, .35);
     --logo-filter: invert(1) brightness(1.6);
   }
@@ -43,7 +44,7 @@
   --bg: #0f1115; --card: #1a1c21; --card-2: #20232a; --ink: #f2f3f5; --ink-2: #c3c2b7;
   --muted: #8d8f98; --line: #2a2d34; --axis: #3b3e46; --grid: #25282e;
   --accent: #5fb3cb; --accent-ink: #8fd0e2; --accent-soft: #16323b;
-  --calls: #3987e5; --messages: #d95926; --primary: #199e70; --neutral: #4a4d55; --bad: #d03b3b;
+  --calls: #3987e5; --messages: #d95926; --primary: #199e70; --issue: #9085e9; --neutral: #4a4d55; --bad: #d03b3b;
   --good-ink: #0ca30c; --bad-ink: #ef6b6b; --shadow: 0 10px 34px rgba(0, 0, 0, .35);
   --logo-filter: invert(1) brightness(1.6);
 }
@@ -126,8 +127,12 @@ img.logo { height: 28px; width: auto; display: block; filter: var(--logo-filter)
 /* ── Плитки ───────────────────────────────────────────────────────────── */
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
 .tiles.six { grid-template-columns: repeat(6, 1fr); }
+.tiles.three { grid-template-columns: repeat(3, 1fr); }
 @media (max-width: 900px) { .tiles, .tiles.six { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 560px) { .tiles, .tiles.six { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) {
+  .tiles, .tiles.six, .tiles.three { grid-template-columns: repeat(2, 1fr); }
+  .tiles.three .tile:first-child { grid-column: 1 / -1; }   /* три плитки: первая — во всю ширину */
+}
 .tile { background: var(--card); border-radius: 16px; padding: 14px 15px; box-shadow: var(--shadow); min-width: 0; }
 .tile .lbl { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
 .tile .key { width: 10px; height: 3px; border-radius: 2px; flex: none; }

@@ -270,6 +270,7 @@ function drawChart(box, o) {
   const every = Math.ceil(n / Math.max(1, Math.floor(plotW / 44)));
   o.labels.forEach((lab, i) => {
     if (i % every && i !== n - 1) return;
+    if (i !== n - 1 && n - 1 - i < every) return;   // последняя подпись всегда видна — соседнюю не рисуем, чтобы не наехали
     const t = svgEl("text", { x: x(i), y: H - 6, "text-anchor": "middle", class: "tick" });
     t.textContent = lab; svg.append(t);
   });
@@ -435,20 +436,38 @@ function convChart(ch) {
 
 function convByStudio(ch, days) {
   if (state.studio) return null;
-  const c = convTotals(ch, days);
+  // У переписок рядом с конверсией — без ответа и замечания, доля от диалогов.
+  const withProblems = ch === "messages";
+  const cells = (t, p) => [el("td", {}, frac(t.booked, t.clients)),
+    el("td", {}, t.primary ? frac(t.primaryBooked, t.primary) : "—"),
+    withProblems ? el("td", {}, p.n_dialogs ? frac(p.n_unanswered, p.n_dialogs) : "—") : null,
+    withProblems ? el("td", {}, p.n_dialogs ? frac(p.n_ai_issues, p.n_dialogs) : "—") : null,
+    el("td", {}, String(t.excluded || "—"))];
   const rows = DATA.studios.map(s => {
-    const t = convTotals(ch, days, s);
-    if (!t.clients && !t.excluded) return null;
-    return el("tr", { class: "click", onclick: () => setStudio(s) },
-      el("td", {}, s), el("td", {}, frac(t.booked, t.clients)),
-      el("td", {}, t.primary ? frac(t.primaryBooked, t.primary) : "—"), el("td", {}, String(t.excluded || "—")));
+    const t = convTotals(ch, days, s), p = msgTotals(days, s);
+    if (!t.clients && !t.excluded && !(withProblems && p.n_dialogs)) return null;
+    return el("tr", { class: "click", onclick: () => setStudio(s) }, el("td", {}, s), cells(t, p));
   }).filter(Boolean);
   if (!rows.length) return null;
-  rows.push(el("tr", { class: "total" }, el("td", {}, "Вся сеть"), el("td", {}, frac(c.booked, c.clients)),
-    el("td", {}, c.primary ? frac(c.primaryBooked, c.primary) : "—"), el("td", {}, String(c.excluded || "—"))));
-  return el("div", { class: "card" }, el("h2", {}, "Конверсия по студиям"),
+  rows.push(el("tr", { class: "total" }, el("td", {}, "Вся сеть"), cells(convTotals(ch, days), msgTotals(days))));
+  return el("div", { class: "card" }, el("h2", {}, "По студиям"),
     el("p", { class: "cap" }, `${periodCaption(days)} · нажмите на студию, чтобы посмотреть только её`),
-    table(["Студия", "Записались", "Первичные", "Не считали"], rows));
+    table(["Студия", "Записались", "Первичные", ...(withProblems ? ["Без ответа", "С замечаниями"] : []), "Не считали"], rows));
+}
+
+// Проблемы переписок по дням (msgstats/): диалоги, без ответа, с замечаниями.
+function msgTotals(days, studio = state.studio) {
+  const t = { n_dialogs: 0, n_unanswered: 0, n_ai_issues: 0, daysWithData: 0 };
+  for (const day of days) {
+    const snap = (DATA.msgstats || {})[day];
+    if (!snap) continue;
+    t.daysWithData++;
+    for (const [name, r] of Object.entries(snap.studios || {})) {
+      if (studio && name !== studio) continue;
+      t.n_dialogs += r.n_dialogs || 0; t.n_unanswered += r.n_unanswered || 0; t.n_ai_issues += r.n_ai_issues || 0;
+    }
+  }
+  return t;
 }
 
 function convNote(ch, days) {
@@ -466,13 +485,14 @@ function convNote(ch, days) {
 // перезвонили и не записался — это один и тот же человек.
 const TAGS = {
   unbooked:   { label: "не записался", cls: "t-unbooked" },
+  unanswered: { label: "не ответили", cls: "t-bad" },
   nocallback: { label: "не перезвонили", cls: "t-bad" },
   critical:   { label: "⚠ критичное замечание", cls: "t-bad" },
   issue:      { label: "замечание", cls: "t-issue" },
 };
 const TAG_FILTERS = {
   calls: [["all", "Все"], ["unbooked", "Не записались"], ["nocallback", "Не перезвонили"], ["issue", "Замечания"]],
-  messages: [["all", "Все"], ["unbooked", "Не записались"]],
+  messages: [["all", "Все"], ["unbooked", "Не записались"], ["unanswered", "Не ответили"], ["issue", "Замечания"]],
 };
 const tagMatches = (row, f) => f === "all" || row.tags.has(f) || (f === "issue" && row.tags.has("critical"));
 
@@ -483,6 +503,7 @@ function peopleRows(ch, days) {
     const conv = DATA.conversion[ch][day];
     if (conv && conv.lists_trimmed) trimmed = true;
     const cs = ch === "calls" ? DATA.calls[day] : null;
+    const ms = ch === "messages" ? (DATA.msgstats || {})[day] : null;
     for (const studio of studioNames()) {
       const byKey = new Map();
       const row = (phone, name) => {
@@ -506,6 +527,23 @@ function peopleRows(ch, days) {
           r.notes.push(it);
         }
       }
+      // Переписки: без ответа и замечания модели (со 2-го этапа, 29.09.2026)
+      const m = ((ms && ms.studios) || {})[studio] || {};
+      for (const u of m.unanswered || []) {
+        const r = row(u.phone, u.name);
+        r.tags.add("unanswered");
+        r.notes.push({ kind: "unanswered", time: u.time, text: u.preview });
+      }
+      for (const it of m.issues || []) {
+        const r = row(it.phone, it.name);
+        r.tags.add("issue");
+        r.notes.push({ kind: "msg-issue", time: it.time, text: it.text });
+      }
+      // Заметка конверсии «без ответа — «…»» повторяет строку «не ответили»,
+      // у которой есть ещё и время, — оставляем одну.
+      for (const r of byKey.values()) {
+        if (r.tags.has("unanswered")) r.notes = r.notes.filter(n => !(typeof n === "string" && n.startsWith("без ответа")));
+      }
       out.push(...byKey.values());
     }
   }
@@ -514,6 +552,10 @@ function peopleRows(ch, days) {
 
 function noteNode(n) {
   if (typeof n === "string") return el("div", { class: "cm" }, n);
+  if (n.kind === "unanswered") return el("div", { class: "cm" },
+    n.time ? el("span", { class: "time" }, n.time) : null, `«${n.text || ""}» — без ответа`);
+  if (n.kind === "msg-issue") return el("div", { class: "cm" },
+    n.time ? el("span", { class: "time" }, n.time) : null, n.text || "");
   // замечание по звонку: время, направление, итог разговора и сами замечания
   return el("div", { class: "cm" },
     el("span", { class: "time" }, `${n.time || ""} ${n.direction === "in" ? "↙ входящий" : "↗ исходящий"}`),
@@ -527,7 +569,7 @@ function peopleCard(ch, days) {
   const filters = TAG_FILTERS[ch];
   if (!filters.some(([id]) => id === state.tagFilter[ch])) state.tagFilter[ch] = "all";
   const card = el("div", { class: "card people" });
-  const title = ch === "calls" ? "Кто требует внимания" : "Не записались";
+  const title = "Кто требует внимания";
   card.append(el("h2", {}, title),
     el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(days)} · строка — человек за день`));
 
@@ -539,7 +581,8 @@ function peopleCard(ch, days) {
 
   const draw = (limit = PAGE) => {
     const q = state.query.trim().toLowerCase();
-    const hay = r => `${r.phone} ${r.name} ${r.notes.map(n => (typeof n === "string" ? n : `${n.summary} ${(n.issues || []).join(" ")}`)).join(" ")}`.toLowerCase();
+    const noteText = n => (typeof n === "string" ? n : `${n.summary || ""} ${n.text || ""} ${(n.issues || []).join(" ")}`);
+    const hay = r => `${r.phone} ${r.name} ${r.notes.map(noteText).join(" ")}`.toLowerCase();
     const searched = q ? rows.filter(r => hay(r).includes(q)) : rows;
     chips.textContent = "";
     filters.forEach(([id, lab]) => {
@@ -641,6 +684,34 @@ function viewMessages(root) {
            sub: c.daysWithData ? `написали сами, без «не считали» · данных за ${c.daysWithData} из ${days.length} дн.` : "нет данных" }),
     ...convTiles("messages", days)));
   root.append(convChart("messages"));
+
+  // Без ответа и замечания — доля от диалогов, по дням (msgstats/: цифры с
+  // июля, списки людей — с 29.09.2026).
+  const p = msgTotals(days), pb = msgTotals(prevDays(days));
+  const plabel = periodLabel(days);
+  root.append(el("div", { class: "tiles three" },
+    tile({ label: "Диалогов", value: p.daysWithData ? String(p.n_dialogs) : "—",
+           sub: p.daysWithData ? `данных за ${p.daysWithData} из ${days.length} дн.` : "нет данных" }),
+    tile({ label: "⚠ Без ответа", key: "--bad", value: fmtPct(pct(p.n_unanswered, p.n_dialogs)),
+           sub: p.n_dialogs ? `${p.n_unanswered} из ${p.n_dialogs} диалогов` : "",
+           delta: { now: pct(p.n_unanswered, p.n_dialogs), before: pb.n_dialogs ? pct(pb.n_unanswered, pb.n_dialogs) : null,
+                    unit: "pp", better: "down", label: plabel } }),
+    tile({ label: "С замечаниями", key: "--issue", value: fmtPct(pct(p.n_ai_issues, p.n_dialogs)),
+           sub: p.n_dialogs ? `${p.n_ai_issues} из ${p.n_dialogs} диалогов` : "",
+           delta: { now: pct(p.n_ai_issues, p.n_dialogs), before: pb.n_dialogs ? pct(pb.n_ai_issues, pb.n_dialogs) : null,
+                    unit: "pp", better: "down", label: plabel } })));
+  const cd = chartDays();
+  const pt = cd.map(d => ((DATA.msgstats || {})[d] ? msgTotals([d]) : null));
+  const share = f => pt.map(t => (t && t.n_dialogs ? pct(t[f], t.n_dialogs) : null));
+  const count = f => pt.map(t => (t && t.n_dialogs ? `${t[f]} из ${t.n_dialogs}` : null));
+  root.append(el("div", { class: "card" },
+    el("h2", {}, "Без ответа и замечания по дням, % от диалогов"),
+    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
+    chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), fmt: v => `${ruNum(v)}%`,
+            aria: "Доля диалогов без ответа и с замечаниями по дням",
+            series: [{ name: "⚠ Без ответа", color: "--bad", values: share("n_unanswered"), detail: count("n_unanswered") },
+                     { name: "С замечаниями", color: "--issue", values: share("n_ai_issues"), detail: count("n_ai_issues") }] })));
+
   const byStudio = convByStudio("messages", days);
   if (byStudio) root.append(byStudio);
   root.append(peopleCard("messages", days));
@@ -675,11 +746,10 @@ function viewMessages(root) {
     el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · по неделям`),
     chart({ kind: "line", labels, tipTitle, fmt, yMax, integer, height: 160, aria: title,
             series: [{ name, color: "--messages", values: series(f) }] }));
+  // Без ответа и замечания — выше, по дням; здесь — то, что есть только по неделям.
   root.append(el("div", { class: "grid2" },
     small("Диалоги", "диалогов", t => t.n_dialogs, ruNum, undefined, true),
-    small("Время ответа, мин", "минут", t => t.respMin, ruNum),
-    small("Без ответа, % от диалогов", "без ответа", t => pct(t.n_unanswered, t.n_dialogs), v => `${ruNum(v)}%`),
-    small("Замечания, % от диалогов", "с замечаниями", t => pct(t.n_ai_issues, t.n_dialogs), v => `${ruNum(v)}%`)));
+    small("Время ответа, мин", "минут", t => t.respMin, ruNum)));
 
   const card = el("div", { class: "card" }, el("h2", {}, `По студиям · неделя ${weekLabel(weeks[weeks.length - 1])}`));
   const last = weeks[weeks.length - 1].studios;
