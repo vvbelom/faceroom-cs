@@ -10,7 +10,7 @@
 
 let DATA = null;
 const state = { tab: "calls", studio: "", period: "7d", query: "",
-                tagFilter: { calls: "all", messages: "all" } };
+                tagFilter: { calls: "all", messages: "all" }, listFilter: {}, reviewsKind: "public" };
 
 // ── Мелочи ─────────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -774,45 +774,142 @@ function viewMessages(root) {
 }
 
 // ── Раздел «Отзывы» ────────────────────────────────────────────────────────
+// Этап 3 правок заказчицы 29.09: два вида отзывов переключателем —
+// публичные (YClients и площадки через Поинтер) и из переписок (оценка визита
+// 1–5 в ответ на запрос бота; по студиям — с 30.09.2026, раньше только по сети).
 function starsNode(n) {
   return el("span", { class: "stars", title: `${n} из 5`, "aria-label": `${n} из 5` },
     "★".repeat(Math.max(0, n)), el("span", { class: "off" }, "★".repeat(Math.max(0, 5 - n))));
 }
 const mondayOf = s => { const d = parseDay(s); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return iso(d); };
 
+function chatRatings(days, studio = state.studio) {
+  const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const list = [];
+  let networkOnlyDays = 0, perStudioFrom = null;
+  for (const day of days) {
+    const snap = (DATA.msgstats || {})[day];
+    if (!snap) continue;
+    const studios = snap.studios || {};
+    if (Object.values(studios).some(r => r.rating_counts)) {
+      if (!perStudioFrom) perStudioFrom = day;
+      for (const [name, r] of Object.entries(studios)) {
+        if (studio && name !== studio) continue;
+        for (const [k, n] of Object.entries(r.rating_counts || {})) counts[k] = (counts[k] || 0) + n;
+        for (const x of r.ratings || []) list.push({ ...x, day, studio: name });
+      }
+    } else if (snap.rating_counts_network) {
+      if (studio) { networkOnlyDays++; continue; }       // по студиям раньше не сохранялось
+      for (const [k, n] of Object.entries(snap.rating_counts_network)) counts[k] = (counts[k] || 0) + n;
+    }
+  }
+  return { counts, list, networkOnlyDays, perStudioFrom };
+}
+function ratingSummary(counts) {
+  const total = sum(Object.values(counts));
+  const avg = total ? Math.round(10 * sum(Object.entries(counts).map(([k, n]) => k * n)) / total) / 10 : null;
+  return { total, avg, neg: (counts[1] || 0) + (counts[2] || 0) + (counts[3] || 0) };
+}
+
+// Таблица со счётчиками-фильтрами, поиском и «показать ещё» — для отзывов.
+function listCard({ id, title, cap, head, rows, chips, hay, render }) {
+  const card = el("div", { class: "card people" }, el("h2", {}, title), el("p", { class: "cap" }, cap));
+  if (!chips.some(([k]) => k === state.listFilter[id])) state.listFilter[id] = chips[0][0];
+  const chipBox = el("div", { class: "chips", role: "group", "aria-label": "Показать" });
+  const search = el("input", { class: "search", type: "search", placeholder: "Имя, телефон, текст",
+                               value: state.query, "aria-label": "Поиск по таблице" });
+  const body = el("div", {});
+  card.append(el("div", { class: "tools" }, chipBox, search), body);
+  const draw = (limit = PAGE) => {
+    const q = state.query.trim().toLowerCase();
+    const searched = q ? rows.filter(r => hay(r).toLowerCase().includes(q)) : rows;
+    chipBox.textContent = "";
+    chips.forEach(([k, lab, pred]) => chipBox.append(el("button", { type: "button", "aria-pressed": String(k === state.listFilter[id]),
+      onclick: () => { state.listFilter[id] = k; draw(); } }, lab, el("span", { class: "n" }, String(searched.filter(pred).length)))));
+    const pred = chips.find(([k]) => k === state.listFilter[id])[2];
+    const shown = searched.filter(pred);
+    body.textContent = "";
+    if (!shown.length) { body.append(el("div", { class: "empty-box" }, rows.length ? "Ничего не нашлось" : "За этот период ничего нет")); return; }
+    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
+      el("thead", {}, el("tr", {}, head.map(h => el("th", {}, h)))),
+      el("tbody", {}, shown.slice(0, limit).map(render)))));
+    if (shown.length > limit) body.append(el("button", { class: "more", type: "button", onclick: () => draw(limit + PAGE) },
+      `Показать ещё (${shown.length - limit})`));
+  };
+  search.addEventListener("input", () => { state.query = search.value; draw(); });
+  draw();
+  return card;
+}
+const isNeg = r => r.stars ? r.stars <= 3 : r.rating <= 3;
+const clientCell = (phone, name) => el("td", { "data-l": "Клиент", class: "who" },
+  phoneLink(phone) || name || "—", phone && name ? el("span", { class: "nm" }, name) : null);
+
 function viewReviews(root) {
   const days = periodDays();
   const inPeriod = r => r.date >= days[0] && r.date <= days[days.length - 1] && (!state.studio || r.studio === state.studio);
-  const list = DATA.reviews.filter(inPeriod);
-  const neg = list.filter(r => r.stars && r.stars <= 3);
-  const rated = list.filter(r => r.stars);
-  const avg = rated.length ? Math.round(10 * sum(rated.map(r => r.stars)) / rated.length) / 10 : null;
+  const pub = DATA.reviews.filter(inPeriod);
+  const pubRated = pub.filter(r => r.stars);
+  const pubAvg = pubRated.length ? Math.round(10 * sum(pubRated.map(r => r.stars)) / pubRated.length) / 10 : null;
+  const sources = [...new Set(pub.map(r => r.source).filter(Boolean))];
+  const chat = chatRatings(days), cs = ratingSummary(chat.counts);
+  const chatNote = state.studio && chat.networkOnlyDays ? " · по студиям — с 30.09" : "";
+
   root.append(el("div", { class: "tiles" },
-    tile({ label: "Средняя оценка", value: avg === null ? "—" : ruNum(avg), sub: `${rated.length} ${plural(rated.length, "оценка", "оценки", "оценок")}` }),
-    tile({ label: "Отзывов", value: String(list.length), sub: periodCaption(days) }),
-    tile({ label: "Негативных (1–3★)", key: "--bad", value: String(neg.length) }),
-    tile({ label: "Площадки", value: String(new Set(list.map(r => r.source).filter(Boolean)).size),
-           sub: [...new Set(list.map(r => r.source).filter(Boolean))].join(", ") || "—" })));
+    tile({ label: "Публичные — средняя", value: pubAvg === null ? "—" : ruNum(pubAvg),
+           sub: `${pubRated.length} ${plural(pubRated.length, "отзыв", "отзыва", "отзывов")}${sources.length ? " · " + sources.join(", ") : ""}` }),
+    tile({ label: "Публичные — негативных", key: "--bad", value: String(pub.filter(isNeg).length), sub: "1–3★" }),
+    tile({ label: "Из переписок — средняя", value: cs.avg === null ? "—" : ruNum(cs.avg),
+           sub: `${cs.total} ${plural(cs.total, "оценка", "оценки", "оценок")} визитов${chatNote}` }),
+    tile({ label: "Из переписок — негативных", key: "--bad", value: String(cs.neg), sub: "1–3★" })));
+
+  root.append(el("div", { class: "seg kind", role: "group", "aria-label": "Вид отзывов" },
+    [["public", "Публичные"], ["chat", "Из переписок"]].map(([k, lab]) => el("button", { type: "button",
+      "aria-pressed": String(state.reviewsKind === k), onclick: () => { state.reviewsKind = k; save(); renderContent(); } }, lab))));
 
   // По неделям: последние 12, 4–5★ фоном, 1–3★ — статусным красным.
   const lastMon = mondayOf(yesterday());
   const weeks = Array.from({ length: 12 }, (_, i) => addDays(lastMon, -7 * (11 - i)));
-  const bucket = (w, pred) => DATA.reviews.filter(r => r.date >= w && r.date <= addDays(w, 6)
-    && (!state.studio || r.studio === state.studio) && pred(r)).length;
-  root.append(el("div", { class: "card" }, el("h2", {}, "Отзывы по неделям"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · последние 12 недель`),
+  const weekDays = w => dayRange(w, addDays(w, 6));
+  const bucket = state.reviewsKind === "chat"
+    ? (w, good) => { const c = chatRatings(weekDays(w)).counts; return good ? c[4] + c[5] : c[1] + c[2] + c[3]; }
+    : (w, good) => DATA.reviews.filter(r => r.date >= w && r.date <= addDays(w, 6) && (!state.studio || r.studio === state.studio)
+        && r.stars && (good ? r.stars >= 4 : r.stars <= 3)).length;
+  const what = state.reviewsKind === "chat" ? "Оценки визитов из переписок" : "Публичные отзывы";
+  root.append(el("div", { class: "card" }, el("h2", {}, `${what} по неделям`),
+    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · последние 12 недель` +
+      (state.reviewsKind === "chat" && state.studio ? " · по студиям оценки сохраняются с 30.09, раньше — только по сети" : "")),
     chart({ kind: "stack", labels: weeks.map(short), tipTitle: i => `Неделя с ${short(weeks[i])}`, totalName: "всего",
-            aria: "Отзывы по неделям: 4–5 звёзд и 1–3 звезды",
-            series: [{ name: "4–5★", color: "--neutral", values: weeks.map(w => bucket(w, r => r.stars >= 4)) },
-                     { name: "⚠ 1–3★", color: "--bad", values: weeks.map(w => bucket(w, r => r.stars && r.stars <= 3)) }] })));
+            aria: `${what} по неделям: 4–5 звёзд и 1–3 звезды`,
+            series: [{ name: "4–5★", color: "--neutral", values: weeks.map(w => bucket(w, true)) },
+                     { name: "⚠ 1–3★", color: "--bad", values: weeks.map(w => bucket(w, false)) }] })));
 
-  root.append(el("div", { class: "section-title" }, "Отзывы за период"));
-  if (!list.length) { root.append(el("div", { class: "empty-box" }, "Отзывов за этот период нет")); return; }
-  root.append(el("div", { class: "group" }, list.map(r => el("div", { class: `person${r.stars && r.stars <= 3 ? " neg" : ""}` },
-    el("span", { class: "ch" }, ""),
-    el("div", { class: "who" }, starsNode(r.stars), el("span", { class: "nm" }, `${r.studio} · ${r.source} · ${longDay(r.date)}`)),
-    el("div", { class: "note" }, r.text || "без текста",
-      r.client || r.phone ? el("div", { style: "margin-top:4px;color:var(--muted)" }, r.client, " ", phoneLink(r.phone)) : null)))));
+  if (state.reviewsKind === "chat") {
+    const rows = chat.list.sort((a, b) => (b.day + b.time).localeCompare(a.day + a.time));
+    root.append(listCard({ id: "chat", title: "Оценки визитов из переписок",
+      cap: `${state.studio || "Вся сеть"} · ${periodCaption(days)} · ответ клиента на запрос оценки и что он дописал в течение часа`,
+      head: ["Дата", "Студия", "Оценка", "Клиент", "Сообщение"], rows,
+      chips: [["all", "Все", () => true], ["neg", "1–3★", isNeg]],
+      hay: r => `${r.phone} ${r.name} ${r.text} ${r.studio}`,
+      render: r => el("tr", { class: isNeg(r) ? "neg" : "" },
+        el("td", { "data-l": "Дата" }, `${short(r.day)} ${r.time || ""}`), el("td", { "data-l": "Студия" }, r.studio),
+        el("td", { "data-l": "Оценка" }, starsNode(r.rating)), clientCell(r.phone, r.name),
+        el("td", { "data-l": "Сообщение", class: "cmt" }, r.text || "—")) }));
+    if (!rows.length) root.append(el("div", { class: "note-box" },
+      "Оценки из переписок по отдельным клиентам сохраняются с 30.09.2026. За более ранние дни есть только общий счёт по сети — он в плитках и на графике."));
+    return;
+  }
+  root.append(listCard({ id: "public", title: "Публичные отзывы",
+    cap: `${state.studio || "Вся сеть"} · ${periodCaption(days)} · YClients и площадки (Яндекс Карты, 2ГИС и др.)`,
+    head: ["Дата", "Студия", "Откуда", "Оценка", "Клиент", "Отзыв"], rows: pub,
+    chips: [["all", "Все", () => true], ["neg", "1–3★", isNeg],
+            ...sources.map(s => [`src:${s}`, s, r => r.source === s])],
+    hay: r => `${r.phone} ${r.client} ${r.text} ${r.source} ${r.studio} ${r.specialist}`,
+    render: r => el("tr", { class: isNeg(r) ? "neg" : "" },
+      el("td", { "data-l": "Дата" }, short(r.date)), el("td", { "data-l": "Студия" }, r.studio),
+      el("td", { "data-l": "Откуда" }, r.source || "—"), el("td", { "data-l": "Оценка" }, r.stars ? starsNode(r.stars) : "—"),
+      clientCell(r.phone, r.client),
+      el("td", { "data-l": "Отзыв", class: "cmt" }, r.text || "без текста",
+        r.specialist ? el("div", { class: "sp" }, `мастер: ${r.specialist}`) : null)) }));
 }
 
 // ── Каркас ─────────────────────────────────────────────────────────────────
@@ -824,7 +921,7 @@ const TABS = [
 
 function setStudio(s) { state.studio = s; save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 function save() {
-  try { localStorage.setItem("fr-cs-view", JSON.stringify({ tab: state.tab, studio: state.studio, period: state.period })); }
+  try { localStorage.setItem("fr-cs-view", JSON.stringify({ tab: state.tab, studio: state.studio, period: state.period, reviewsKind: state.reviewsKind })); }
   catch (e) { /* не страшно */ }
 }
 function restore() {
@@ -833,6 +930,7 @@ function restore() {
     if (TABS.some(t => t.id === v.tab)) state.tab = v.tab;
     if (!v.studio || DATA.studios.includes(v.studio)) state.studio = v.studio || "";
     if (PERIODS.some(p => p.id === v.period)) state.period = v.period;
+    if (v.reviewsKind === "chat" || v.reviewsKind === "public") state.reviewsKind = v.reviewsKind;
   } catch (e) { /* по умолчанию */ }
 }
 

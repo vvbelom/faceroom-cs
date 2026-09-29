@@ -264,3 +264,10 @@ table.ppl ul { margin: 3px 0 0; padding-left: 18px; }
   table.ppl td.cmt::before, table.ppl td.tags::before { display: block; margin-bottom: 2px; }
   .people .search { max-width: none; }
 }
+
+/* ── Отзывы ───────────────────────────────────────────────────────────── */
+.seg.kind { margin: 0 0 14px; }
+table.ppl tr.neg td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+table.ppl td .sp { margin-top: 3px; color: var(--muted); font-size: 12px; }
+table.ppl .stars { white-space: nowrap; }
+@media (max-width: 640px) { table.ppl tr.neg { box-shadow: inset 3px 0 0 var(--bad); } table.ppl tr.neg td:first-child { box-shadow: none; } }
