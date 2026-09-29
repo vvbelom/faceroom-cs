@@ -9,7 +9,8 @@
 "use strict";
 
 let DATA = null;
-const state = { tab: "conversion", studio: "", period: "7d", channel: "all", query: "" };
+const state = { tab: "calls", studio: "", period: "7d", query: "",
+                tagFilter: { calls: "all", messages: "all" } };
 
 // ── Мелочи ─────────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -211,7 +212,9 @@ function niceScale(maxValue, integer) {
 const ruNum = v => String(Math.round(v * 10) / 10).replace(".", ",");
 
 function chart(opts) {
-  // opts: {kind: "line"|"stack", labels, series: [{name, color, values}], yMax, fmt, height, tipTitle}
+  // opts: {kind: "line"|"stack", labels, series: [{name, color, values, detail?}], yMax, fmt, height, tipTitle}
+  // detail — подпись к значению в подсказке и в таблице («37 из 70»): за
+  // процентом должно быть видно, сколько это людей.
   const box = el("div", { class: "chart", tabindex: "0", role: "img" });
   const legend = opts.series.length > 1
     ? el("div", { class: "legend" }, opts.series.map(s => el("span", {},
@@ -228,7 +231,8 @@ function chart(opts) {
     el("thead", {}, el("tr", {}, el("th", {}, "Дата"), opts.series.map(s => el("th", {}, s.name)))),
     el("tbody", {}, opts.labels.map((lab, i) => el("tr", {},
       el("td", {}, opts.tipTitle ? opts.tipTitle(i) : lab),
-      opts.series.map(s => el("td", {}, s.values[i] === null || s.values[i] === undefined ? "—" : fmt(s.values[i]))))))));
+      opts.series.map(s => el("td", {}, s.values[i] === null || s.values[i] === undefined ? "—"
+        : [fmt(s.values[i]), s.detail && s.detail[i] ? el("span", { class: "pct" }, s.detail[i]) : null])))))));
   const wrap = el("div", {}, legend, box, tableBtn, tableBox);
   // Рисуется, когда раздел уже в документе (renderContent), — ширину нужно
   // измерить. Не через requestAnimationFrame: в фоновой вкладке кадров нет.
@@ -341,7 +345,8 @@ function drawChart(box, o) {
     o.series.forEach(s => {
       const v = s.values[active];
       tip.append(el("div", { class: "r" }, el("i", { style: `background:var(${s.color})` }),
-        el("b", {}, v === null || v === undefined ? "—" : fmt(v)), el("span", {}, s.name)));
+        el("b", {}, v === null || v === undefined ? "—" : fmt(v)), el("span", {}, s.name),
+        s.detail && s.detail[active] ? el("span", { class: "d" }, `· ${s.detail[active]}`) : null));
     });
     if (o.kind === "stack" && o.totalName) {
       tip.append(el("div", { class: "r" }, el("i", { style: "background:transparent" }),
@@ -378,151 +383,215 @@ function table(head, rows) {
     el("tbody", {}, rows)));
 }
 
-// ── Раздел «Конверсия» ─────────────────────────────────────────────────────
+// ── Конверсия: общие куски «Звонков» и «Переписок» ─────────────────────────
+// С 29.09.2026 отдельных вкладок «Конверсия» и «Не записались» нет (просьба
+// заказчицы): конверсия и люди, с которыми надо поработать, живут в разделе
+// своего канала, рядом с остальными цифрами по нему.
 const REASONS = { service: "уточняли по своей записи", confirm: "подтверждали запись",
                   late: "предупреждали об опоздании", feedback: "отвечали на запрос впечатлений",
                   not_client: "писали не клиенты", other: "обращались не по услугам" };
+const CH_COLOR = { calls: "--calls", messages: "--messages" };
 
-function viewConversion(root) {
-  const days = periodDays(), before = prevDays(days);
-  const label = `к пред. ${days.length} ${plural(days.length, "дню", "дням", "дням")}`;
-  const c = convTotals("calls", days), cb = convTotals("calls", before);
-  const m = convTotals("messages", days), mb = convTotals("messages", before);
-  const excluded = c.excluded + m.excluded;
-  const reasons = {};
-  for (const t of [c, m]) for (const [k, n] of Object.entries(t.reasons)) reasons[k] = (reasons[k] || 0) + n;
-  // Все причины, а не две самые частые: иначе число в плитке не сходится с
-  // расшифровкой под ним (37, а под ним 10 + 9).
-  const allReasons = Object.entries(reasons).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
+function reasonsText(t) {
+  // Все причины, а не две самые частые: иначе число «Не считали» не сходится
+  // с расшифровкой под ним.
+  return Object.entries(t.reasons).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${REASONS[k] || k} ${n}`).join(", ");
-  const firstPrimary = firstDayWith("calls", "primary");
-  const firstExcl = [firstDayWith("calls", "no_booking_expected"), firstDayWith("messages", "no_booking_expected")]
-    .filter(Boolean).sort().pop() || null;
+}
+const periodLabel = days => `к пред. ${days.length} ${plural(days.length, "дню", "дням", "дням")}`;
+const sinceNote = (first, days) => (first && first > days[0] ? ` · считаются с ${short(first)}` : "");
 
-  root.append(el("div", { class: "tiles" },
-    tile({ label: "Звонки", key: "--calls", value: fmtPct(pct(c.booked, c.clients)),
+function convTiles(ch, days) {
+  const before = prevDays(days), label = periodLabel(days);
+  const c = convTotals(ch, days), cb = convTotals(ch, before);
+  return [
+    tile({ label: "Конверсия в запись", key: CH_COLOR[ch], value: fmtPct(pct(c.booked, c.clients)),
            sub: c.clients ? `${c.booked} из ${c.clients} записались` : "нет данных",
            delta: { now: pct(c.booked, c.clients), before: pct(cb.booked, cb.clients), unit: "pp", better: "up", label } }),
-    tile({ label: "Переписки", key: "--messages", value: fmtPct(pct(m.booked, m.clients)),
-           sub: m.clients ? `${m.booked} из ${m.clients} записались` : "нет данных",
-           delta: { now: pct(m.booked, m.clients), before: pct(mb.booked, mb.clients), unit: "pp", better: "up", label } }),
-    tile({ label: "Первичные по звонкам", value: fmtPct(pct(c.primaryBooked, c.primary)),
-           sub: c.primary ? `${c.primaryBooked} из ${c.primary} записались` +
-                  (firstPrimary && firstPrimary > days[0] ? ` · считаются с ${short(firstPrimary)}` : "")
-                : "нет данных",
+    tile({ label: "Первичные", key: "--primary", value: fmtPct(pct(c.primaryBooked, c.primary)),
+           sub: c.primary ? `${c.primaryBooked} из ${c.primary} записались${sinceNote(firstDayWith(ch, "primary"), days)}` : "нет данных",
            delta: { now: pct(c.primaryBooked, c.primary), before: pct(cb.primaryBooked, cb.primary), unit: "pp", better: "up", label } }),
-    tile({ label: "Не считали", value: String(excluded),
-           sub: excluded ? allReasons : "запись и не предполагалась" })));
-
-  const cd = chartDays();
-  const series = ch => cd.map(d => {
-    if (!DATA.conversion[ch][d]) return null;
-    const t = convTotals(ch, [d]);
-    return t.clients ? pct(t.booked, t.clients) : null;
-  });
-  root.append(el("div", { class: "card" },
-    el("h2", {}, "Конверсия по дням, %"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · записались из обратившихся · ${periodCaption(cd)}`),
-    chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), yMax: 100, fmt: v => `${ruNum(v)}%`,
-            aria: "Конверсия звонков и переписок по дням",
-            series: [{ name: "Звонки", color: "--calls", values: series("calls") },
-                     { name: "Переписки", color: "--messages", values: series("messages") }] })));
-
-  // По студиям — или по дням, если студия выбрана.
-  const card = el("div", { class: "card" });
-  if (!state.studio) {
-    card.append(el("h2", {}, "По студиям"), el("p", { class: "cap" }, `${periodCaption(days)} · нажмите на студию, чтобы посмотреть только её`));
-    const rows = DATA.studios.map(s => {
-      const sc = convTotals("calls", days, s), sm = convTotals("messages", days, s);
-      if (!sc.clients && !sm.clients) return null;
-      return el("tr", { class: "click", onclick: () => setStudio(s) },
-        el("td", {}, s), el("td", {}, frac(sc.booked, sc.clients)), el("td", {}, frac(sm.booked, sm.clients)),
-        el("td", {}, sc.primary ? frac(sc.primaryBooked, sc.primary) : "—"));
-    }).filter(Boolean);
-    rows.push(el("tr", { class: "total" }, el("td", {}, "Вся сеть"), el("td", {}, frac(c.booked, c.clients)),
-      el("td", {}, frac(m.booked, m.clients)), el("td", {}, c.primary ? frac(c.primaryBooked, c.primary) : "—")));
-    card.append(table(["Студия", "Звонки", "Переписки", "Первичные (зв.)"], rows));
-  } else {
-    card.append(el("h2", {}, `${state.studio} по дням`), el("p", { class: "cap" }, periodCaption(days)));
-    const rows = [...days].reverse().map(d => {
-      const sc = convTotals("calls", [d]), sm = convTotals("messages", [d]);
-      if (!sc.daysWithData && !sm.daysWithData) return null;
-      return el("tr", {}, el("td", {}, longDay(d)), el("td", {}, frac(sc.booked, sc.clients)),
-        el("td", {}, frac(sm.booked, sm.clients)));
-    }).filter(Boolean);
-    card.append(rows.length ? table(["День", "Звонки", "Переписки"], rows) : el("div", { class: "empty-box" }, "Нет данных за период"));
-  }
-  root.append(card);
-  root.append(el("div", { class: "note-box" },
-    "Запись — новая запись в YClients, созданная в день обращения. В конверсию не входят обращения, где записи ",
-    "и не ждали: подтверждение визита, опоздание, ответ на запрос впечатлений, коллеги и поставщики. ",
-    "Отмены и переносы остаются — это шанс перезаписать клиента.",
-    firstExcl && firstExcl > days[0]
-      ? ` Такие обращения вычёркиваются с ${short(firstExcl)}; за более ранние дни они входят в расчёт, и конверсия там ниже.`
-      : ""));
+    tile({ label: "Не считали", value: String(c.excluded),
+           sub: c.excluded ? reasonsText(c) : "запись и не предполагалась" }),
+  ];
 }
 
-// ── Раздел «Не записались» ─────────────────────────────────────────────────
-function viewUnbooked(root) {
-  const days = [...periodDays()].reverse();
-  const q = state.query.trim().toLowerCase();
-  let total = 0, trimmed = false;
-  const out = el("div", {});
-  for (const day of days) {
-    const groups = [];
+function convChart(ch) {
+  const cd = chartDays();
+  const at = d => (DATA.conversion[ch][d] ? convTotals(ch, [d]) : null);
+  const totals = cd.map(at);
+  const line = (num, den) => totals.map(t => (t && t[den] ? pct(t[num], t[den]) : null));
+  const detail = (num, den) => totals.map(t => (t && t[den] ? `${t[num]} из ${t[den]}` : null));
+  const firstPrimary = firstDayWith(ch, "primary");
+  return el("div", { class: "card" },
+    el("h2", {}, "Конверсия в запись по дням, %"),
+    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · записались из обратившихся · ${periodCaption(cd)}` +
+      (firstPrimary && firstPrimary > cd[0] ? ` · первичные — с ${short(firstPrimary)}` : "")),
+    chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), yMax: 100, fmt: v => `${ruNum(v)}%`,
+            aria: `Конверсия ${ch === "calls" ? "звонков" : "переписок"} в запись по дням: все обратившиеся и первичные`,
+            series: [{ name: "Все обратившиеся", color: CH_COLOR[ch], values: line("booked", "clients"), detail: detail("booked", "clients") },
+                     { name: "Первичные", color: "--primary", values: line("primaryBooked", "primary"), detail: detail("primaryBooked", "primary") }] }));
+}
+
+function convByStudio(ch, days) {
+  if (state.studio) return null;
+  const c = convTotals(ch, days);
+  const rows = DATA.studios.map(s => {
+    const t = convTotals(ch, days, s);
+    if (!t.clients && !t.excluded) return null;
+    return el("tr", { class: "click", onclick: () => setStudio(s) },
+      el("td", {}, s), el("td", {}, frac(t.booked, t.clients)),
+      el("td", {}, t.primary ? frac(t.primaryBooked, t.primary) : "—"), el("td", {}, String(t.excluded || "—")));
+  }).filter(Boolean);
+  if (!rows.length) return null;
+  rows.push(el("tr", { class: "total" }, el("td", {}, "Вся сеть"), el("td", {}, frac(c.booked, c.clients)),
+    el("td", {}, c.primary ? frac(c.primaryBooked, c.primary) : "—"), el("td", {}, String(c.excluded || "—"))));
+  return el("div", { class: "card" }, el("h2", {}, "Конверсия по студиям"),
+    el("p", { class: "cap" }, `${periodCaption(days)} · нажмите на студию, чтобы посмотреть только её`),
+    table(["Студия", "Записались", "Первичные", "Не считали"], rows));
+}
+
+function convNote(ch, days) {
+  const first = firstDayWith(ch, "no_booking_expected");
+  return el("div", { class: "note-box" },
+    "Запись — новая запись в YClients, созданная в день обращения; перенос визита по просьбе клиента тоже считается записью. ",
+    "В конверсию не входят обращения, где записи и не ждали («Не считали»). Отмены остаются — это шанс перезаписать клиента.",
+    first && first > days[0]
+      ? ` Такие обращения вычёркиваются с ${short(first)}; за более ранние дни они входят в расчёт, и конверсия там ниже.` : "");
+}
+
+// ── Кто требует внимания: таблица с тегами ─────────────────────────────────
+// Строка — человек за день: студия, телефон (или имя, если номера нет), теги
+// и комментарий. Тегов у строки может быть несколько: пропустили, не
+// перезвонили и не записался — это один и тот же человек.
+const TAGS = {
+  unbooked:   { label: "не записался", cls: "t-unbooked" },
+  nocallback: { label: "не перезвонили", cls: "t-bad" },
+  critical:   { label: "⚠ критичное замечание", cls: "t-bad" },
+  issue:      { label: "замечание", cls: "t-issue" },
+};
+const TAG_FILTERS = {
+  calls: [["all", "Все"], ["unbooked", "Не записались"], ["nocallback", "Не перезвонили"], ["issue", "Замечания"]],
+  messages: [["all", "Все"], ["unbooked", "Не записались"]],
+};
+const tagMatches = (row, f) => f === "all" || row.tags.has(f) || (f === "issue" && row.tags.has("critical"));
+
+function peopleRows(ch, days) {
+  const out = [];
+  let trimmed = false;
+  for (const day of [...days].reverse()) {
+    const conv = DATA.conversion[ch][day];
+    if (conv && conv.lists_trimmed) trimmed = true;
+    const cs = ch === "calls" ? DATA.calls[day] : null;
     for (const studio of studioNames()) {
-      const people = [];
-      for (const ch of ["calls", "messages"]) {
-        if (state.channel !== "all" && state.channel !== ch) continue;
-        const snap = DATA.conversion[ch][day];
-        if (!snap) continue;
-        if (snap.lists_trimmed) trimmed = true;
-        for (const u of ((snap.studios || {})[studio] || {}).unbooked || []) {
-          const hay = `${u.phone} ${u.name} ${u.note}`.toLowerCase();
-          if (q && !hay.includes(q)) continue;
-          people.push({ ...u, ch });
+      const byKey = new Map();
+      const row = (phone, name) => {
+        const key = phone || `имя:${name}`;
+        if (!byKey.has(key)) byKey.set(key, { day, studio, phone: phone || "", name: name || "", tags: new Set(), notes: [] });
+        const r = byKey.get(key);
+        if (!r.name && name) r.name = name;
+        return r;
+      };
+      for (const u of ((conv && conv.studios) || {})[studio]?.unbooked || []) {
+        const r = row(u.phone, u.name);
+        r.tags.add("unbooked");
+        if (u.note) r.notes.push(u.note);
+      }
+      const s = ((cs && cs.studios) || {})[studio] || {};
+      for (const p of s.missed_no_callback || []) row(p, "").tags.add("nocallback");
+      if (cs && cs.source !== "backfill") {
+        for (const it of s.issues || []) {
+          const r = row(it.phone, "");
+          r.tags.add(it.severity >= 3 ? "critical" : "issue");
+          r.notes.push(it);
         }
       }
-      if (people.length) groups.push({ studio, people });
+      out.push(...byKey.values());
     }
-    if (!groups.length) continue;
-    const n = sum(groups.map(g => g.people.length));
-    total += n;
-    out.append(el("div", { class: "day" },
-      el("h3", {}, longDay(day), el("span", {}, `· ${n}`)),
-      groups.map(g => el("div", { class: "group" },
-        el("h4", {}, g.studio, el("span", { class: "cnt" }, String(g.people.length))),
-        g.people.map(p => el("div", { class: "person" },
-          el("span", { class: "ch", title: p.ch === "calls" ? "Звонок" : "Переписка" }, p.ch === "calls" ? "📞" : "💬"),
-          el("div", { class: "who" }, phoneLink(p.phone) || "без номера", p.name ? el("span", { class: "nm" }, p.name) : null),
-          p.note ? el("div", { class: "note" }, p.note) : null))))));
   }
-  root.append(el("div", { class: "note-box" },
-    total ? `За ${periodCaption()} — ${total} ${plural(total, "человек", "человека", "человек")}: обратились и не записались в тот же день.`
-          : "За этот период никого нет.",
-    trimmed ? " Списки хранятся за последние 62 дня, по более ранним дням остались только цифры." : ""));
-  root.append(out);
+  return { rows: out, trimmed };
+}
+
+function noteNode(n) {
+  if (typeof n === "string") return el("div", { class: "cm" }, n);
+  // замечание по звонку: время, направление, итог разговора и сами замечания
+  return el("div", { class: "cm" },
+    el("span", { class: "time" }, `${n.time || ""} ${n.direction === "in" ? "↙ входящий" : "↗ исходящий"}`),
+    n.summary ? ` ${n.summary}` : "",
+    (n.issues || []).length ? el("ul", {}, n.issues.map(x => el("li", {}, x))) : null);
+}
+
+const PAGE = 100;
+function peopleCard(ch, days) {
+  const { rows, trimmed } = peopleRows(ch, days);
+  const filters = TAG_FILTERS[ch];
+  if (!filters.some(([id]) => id === state.tagFilter[ch])) state.tagFilter[ch] = "all";
+  const card = el("div", { class: "card people" });
+  const title = ch === "calls" ? "Кто требует внимания" : "Не записались";
+  card.append(el("h2", {}, title),
+    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(days)} · строка — человек за день`));
+
+  const chips = el("div", { class: "chips", role: "group", "aria-label": "Показать" });
+  const search = el("input", { class: "search", type: "search", placeholder: "Телефон, имя, текст",
+                               value: state.query, "aria-label": "Поиск по таблице" });
+  const body = el("div", {});
+  card.append(el("div", { class: "tools" }, filters.length > 1 ? chips : null, search), body);
+
+  const draw = (limit = PAGE) => {
+    const q = state.query.trim().toLowerCase();
+    const hay = r => `${r.phone} ${r.name} ${r.notes.map(n => (typeof n === "string" ? n : `${n.summary} ${(n.issues || []).join(" ")}`)).join(" ")}`.toLowerCase();
+    const searched = q ? rows.filter(r => hay(r).includes(q)) : rows;
+    chips.textContent = "";
+    filters.forEach(([id, lab]) => {
+      const n = searched.filter(r => tagMatches(r, id)).length;
+      chips.append(el("button", { type: "button", "aria-pressed": String(id === state.tagFilter[ch]),
+        onclick: () => { state.tagFilter[ch] = id; draw(); } }, lab, el("span", { class: "n" }, String(n))));
+    });
+    const shown = searched.filter(r => tagMatches(r, state.tagFilter[ch]));
+    body.textContent = "";
+    if (!shown.length) {
+      body.append(el("div", { class: "empty-box" }, rows.length ? "Ничего не нашлось" : "За этот период никого нет"));
+      return;
+    }
+    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
+      el("thead", {}, el("tr", {}, ["Дата", "Студия", "Клиент", "Теги", "Комментарий"].map(h => el("th", {}, h)))),
+      el("tbody", {}, shown.slice(0, limit).map(r => el("tr", {},
+        el("td", { "data-l": "Дата" }, short(r.day)),
+        el("td", { "data-l": "Студия" }, r.studio),
+        el("td", { "data-l": "Клиент", class: "who" }, phoneLink(r.phone) || r.name || "без номера",
+          r.phone && r.name ? el("span", { class: "nm" }, r.name) : null),
+        el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => r.tags.has(t))
+          .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
+        el("td", { "data-l": "Комментарий", class: "cmt" }, r.notes.length ? r.notes.map(noteNode) : "—")))))));
+    if (shown.length > limit) {
+      body.append(el("button", { class: "more", type: "button", onclick: () => draw(limit + PAGE) },
+        `Показать ещё (${shown.length - limit})`));
+    }
+  };
+  search.addEventListener("input", () => { state.query = search.value; draw(); });
+  draw();
+  if (trimmed) card.append(el("p", { class: "cap", style: "margin-top:8px" },
+    "Списки хранятся за последние 62 дня, по более ранним дням остались только цифры."));
+  return card;
 }
 
 // ── Раздел «Звонки» ────────────────────────────────────────────────────────
 function viewCalls(root) {
   const days = periodDays(), before = prevDays(days);
-  const label = `к пред. ${days.length} ${plural(days.length, "дню", "дням", "дням")}`;
+  const label = periodLabel(days);
   const t = callTotals(days), tb = callTotals(before);
-  if (!t.daysWithData) {
-    root.append(el("div", { class: "empty-box" }, "Нет данных по звонкам за этот период")); return;
-  }
+  const [convTile, primaryTile, exclTile] = convTiles("calls", days);
   const answered = t.in_total - t.in_missed, answeredB = tb.in_total - tb.in_missed;
   root.append(el("div", { class: "tiles six" },
-    tile({ label: "Входящие", value: String(t.in_total),
+    tile({ label: "Входящие", value: t.daysWithData ? String(t.in_total) : "—",
+           sub: t.daysWithData ? `исходящих ${t.out_total}, без ответа ${t.out_noanswer}` : "нет данных",
            delta: { now: t.in_total, before: tb.daysWithData ? tb.in_total : null, unit: "pct", better: "up", label } }),
-    tile({ label: "Принято", value: fmtPct(pct(answered, t.in_total)), sub: `${answered} из ${t.in_total}`,
+    tile({ label: "Принято", value: fmtPct(pct(answered, t.in_total)), sub: t.in_total ? `${answered} из ${t.in_total}` : "",
            delta: { now: pct(answered, t.in_total), before: tb.daysWithData ? pct(answeredB, tb.in_total) : null, unit: "pp", better: "up", label } }),
-    tile({ label: "Пропущено", key: "--bad", value: String(t.in_missed), sub: "не перезвонили за 10 минут",
+    tile({ label: "Пропущено", key: "--bad", value: String(t.in_missed),
+           sub: `не перезвонили ${t.noCallback}, перезвонили ${t.in_missed_callback}`,
            delta: { now: t.in_missed, before: tb.daysWithData ? tb.in_missed : null, unit: "pct", better: "down", label } }),
-    tile({ label: "Не перезвонили", value: String(t.noCallback), sub: `перезвонили ${t.in_missed_callback}` }),
-    tile({ label: "Исходящие", value: String(t.out_total), sub: `без ответа ${t.out_noanswer}` }),
-    tile({ label: "Записались", value: String(t.in_booked), sub: "из входящих, по YClients" })));
+    convTile, primaryTile, exclTile));
 
   const cd = chartDays();
   const val = (d, f) => (DATA.calls[d] ? callTotals([d])[f] : null);
@@ -533,55 +602,19 @@ function viewCalls(root) {
             aria: "Входящие звонки по дням: принято и пропущено",
             series: [{ name: "Принято", color: "--neutral", values: cd.map(d => { const v = val(d, "in_total"); return v === null ? null : v - val(d, "in_missed"); }) },
                      { name: "⚠ Пропущено", color: "--bad", values: cd.map(d => val(d, "in_missed")) }] })));
+  root.append(convChart("calls"));
+  const byStudio = convByStudio("calls", days);
+  if (byStudio) root.append(byStudio);
+  root.append(peopleCard("calls", days));
 
-  // Не перезвонили — номера, по дням и студиям.
-  const lateDays = [...days].reverse();
-  const missed = el("div", {});
-  for (const day of lateDays) {
-    const snap = DATA.calls[day];
-    if (!snap) continue;
-    const groups = studioNames().map(s => ({ s, phones: ((snap.studios || {})[s] || {}).missed_no_callback || [] }))
-      .filter(g => g.phones.length);
-    if (!groups.length) continue;
-    missed.append(el("div", { class: "day" }, el("h3", {}, longDay(day)),
-      groups.map(g => el("div", { class: "group" },
-        el("h4", {}, g.s, el("span", { class: "cnt" }, String(g.phones.length))),
-        el("div", { class: "phones" }, g.phones.map(phoneLink))))));
-  }
-  root.append(el("div", { class: "section-title" }, "Пропустили и не перезвонили"),
-    missed.childNodes.length ? missed : el("div", { class: "empty-box" }, "Таких звонков нет"));
-
-  // Замечания по звонкам.
-  const issues = el("div", {});
-  const notes = [];
-  for (const day of lateDays) {
-    const snap = DATA.calls[day];
-    if (!snap) continue;
-    if (snap.source === "backfill") { notes.push(day); continue; }
-    const groups = studioNames().map(s => ({ s, items: ((snap.studios || {})[s] || {}).issues || [] }))
-      .filter(g => g.items.length);
-    const a = snap.analysis || {};
-    const partial = a.selected && a.done < a.selected
-      ? el("span", {}, `· разобрано ${a.done} из ${a.selected} звонков`) : null;
-    if (!groups.length && !partial) continue;
-    issues.append(el("div", { class: "day" }, el("h3", {}, longDay(day), partial),
-      groups.map(g => el("div", { class: "group" },
-        el("h4", {}, g.s, el("span", { class: "cnt" }, String(g.items.length))),
-        g.items.map(it => el("div", { class: "person" },
-          el("span", { class: "ch", title: it.direction === "in" ? "Входящий" : "Исходящий" }, it.direction === "in" ? "↙" : "↗"),
-          el("div", { class: "who" }, el("span", { class: "time" }, it.time), phoneLink(it.phone) || "без номера",
-            el("span", { class: `sev s${it.severity >= 3 ? 3 : 2}` }, it.severity >= 3 ? "⚠ критично" : "важно")),
-          el("div", { class: "note" }, it.summary,
-            el("ul", {}, (it.issues || []).map(x => el("li", {}, x))))))))));
-  }
-  root.append(el("div", { class: "section-title" }, "Замечания по звонкам"),
-    issues.childNodes.length ? issues : el("div", { class: "empty-box" }, "Замечаний нет"));
-  if (notes.length) root.append(el("div", { class: "note-box" },
-    `По ${notes.length} ${plural(notes.length, "дню", "дням", "дням")} (${notes.map(short).join(", ")}) звонки восстановлены задним числом: ` +
+  const restored = [...days].filter(d => DATA.calls[d] && DATA.calls[d].source === "backfill");
+  if (restored.length) root.append(el("div", { class: "note-box" },
+    `По ${restored.length} ${plural(restored.length, "дню", "дням", "дням")} (${restored.map(short).join(", ")}) звонки восстановлены задним числом: ` +
     "цифры есть, а разбора разговоров тогда ещё не было."));
+  root.append(convNote("calls", days));
 }
 
-// ── Раздел «Переписки» (по неделям) ────────────────────────────────────────
+// ── Раздел «Переписки» ─────────────────────────────────────────────────────
 const MQ = ["n_dialogs", "n_new_bookings", "n_unanswered", "n_first_time", "n_first_time_booked", "n_ai_issues"];
 function mqTotals(rows) {
   const t = Object.fromEntries(MQ.map(f => [f, 0]));
@@ -597,12 +630,30 @@ function mqTotals(rows) {
 const weekLabel = w => `${short(w.start)}–${short(w.end)}`;
 
 function viewMessages(root) {
+  // Конверсия — по дням, за выбранный период, как в «Звонках».
+  const days = periodDays();
+  // У «Обратились» нет сравнения с прошлым периодом: число зависит от того,
+  // за сколько дней есть срезы и вычёркивались ли «не считали» (с 20.09), —
+  // стрелка показала бы не поток клиентов, а смену правил счёта.
+  const c = convTotals("messages", days);
+  root.append(el("div", { class: "tiles" },
+    tile({ label: "Обратились", value: c.daysWithData ? String(c.clients) : "—",
+           sub: c.daysWithData ? `написали сами, без «не считали» · данных за ${c.daysWithData} из ${days.length} дн.` : "нет данных" }),
+    ...convTiles("messages", days)));
+  root.append(convChart("messages"));
+  const byStudio = convByStudio("messages", days);
+  if (byStudio) root.append(byStudio);
+  root.append(peopleCard("messages", days));
+  root.append(convNote("messages", days));
+
+  // Качество — по неделям: так его считает недельный отчёт.
+  root.append(el("div", { class: "section-title" }, "Качество переписок по неделям"));
   const weeks = (DATA.messages_quality.weeks || []).slice(-12);
   if (!weeks.length) { root.append(el("div", { class: "empty-box" }, "Нет недельной статистики")); return; }
   const cur = mqTotals(weeks[weeks.length - 1].studios), prev = weeks.length > 1 ? mqTotals(weeks[weeks.length - 2].studios) : null;
   const label = "к пред. неделе";
   const d = (now, before, unit, better) => ({ now, before: prev ? before : null, unit, better, label });
-  root.append(el("div", { class: "note-box" }, `Качество переписок считается по неделям. Последняя полная неделя — ${weekLabel(weeks[weeks.length - 1])}.`));
+  root.append(el("div", { class: "note-box" }, `Последняя полная неделя — ${weekLabel(weeks[weeks.length - 1])}.`));
   root.append(el("div", { class: "tiles six" },
     tile({ label: "Диалоги", value: String(cur.n_dialogs), delta: d(cur.n_dialogs, prev && prev.n_dialogs, "pct", "up") }),
     tile({ label: "Записи", value: String(cur.n_new_bookings), sub: `${fmtPct(pct(cur.n_new_bookings, cur.n_dialogs))} от диалогов`,
@@ -626,9 +677,9 @@ function viewMessages(root) {
             series: [{ name, color: "--messages", values: series(f) }] }));
   root.append(el("div", { class: "grid2" },
     small("Диалоги", "диалогов", t => t.n_dialogs, ruNum, undefined, true),
-    small("Конверсия первичных, %", "конверсия", t => pct(t.n_first_time_booked, t.n_first_time), v => `${ruNum(v)}%`, 100),
+    small("Время ответа, мин", "минут", t => t.respMin, ruNum),
     small("Без ответа, % от диалогов", "без ответа", t => pct(t.n_unanswered, t.n_dialogs), v => `${ruNum(v)}%`),
-    small("Время ответа, мин", "минут", t => t.respMin, ruNum)));
+    small("Замечания, % от диалогов", "с замечаниями", t => pct(t.n_ai_issues, t.n_dialogs), v => `${ruNum(v)}%`)));
 
   const card = el("div", { class: "card" }, el("h2", {}, `По студиям · неделя ${weekLabel(weeks[weeks.length - 1])}`));
   const last = weeks[weeks.length - 1].studios;
@@ -642,13 +693,13 @@ function viewMessages(root) {
   card.append(table(["Студия", "Записи", "Первичные", "Без ответа", "Замечания", "Ответ"], rows));
   root.append(card);
 
-  const days = (DATA.messages_quality.days || []).filter(x => x.date > weeks[weeks.length - 1].end);
-  if (days.length) {
+  const cw = (DATA.messages_quality.days || []).filter(x => x.date > weeks[weeks.length - 1].end);
+  if (cw.length) {
     const t = { n_dialogs: 0, n_new_bookings: 0 };
-    for (const x of days) { const s = mqTotals(x.studios); t.n_dialogs += s.n_dialogs; t.n_new_bookings += s.n_new_bookings; }
+    for (const x of cw) { const s = mqTotals(x.studios); t.n_dialogs += s.n_dialogs; t.n_new_bookings += s.n_new_bookings; }
     root.append(el("div", { class: "note-box" },
-      `Текущая неделя, ${days.length} ${plural(days.length, "день", "дня", "дней")}: ${t.n_dialogs} диалогов, ${t.n_new_bookings} записей. ` +
-      "В графики она войдёт, когда закончится."));
+      `Текущая неделя, ${cw.length} ${plural(cw.length, "день", "дня", "дней")}: ${t.n_dialogs} диалогов, ${t.n_new_bookings} записей. ` +
+      "В недельные графики она войдёт, когда закончится."));
   }
 }
 
@@ -696,8 +747,6 @@ function viewReviews(root) {
 
 // ── Каркас ─────────────────────────────────────────────────────────────────
 const TABS = [
-  { id: "conversion", label: "Конверсия", view: viewConversion },
-  { id: "unbooked", label: "Не записались", view: viewUnbooked },
   { id: "calls", label: "Звонки", view: viewCalls },
   { id: "messages", label: "Переписки", view: viewMessages },
   { id: "reviews", label: "Отзывы", view: viewReviews },
@@ -725,23 +774,9 @@ function renderFilters() {
     DATA.studios.map(s => el("option", { value: s, selected: s === state.studio }, s)));
   sel.addEventListener("change", () => setStudio(sel.value));
   f.append(sel);
-  if (state.tab === "messages") {
-    f.append(el("span", { class: "hint" }, "по неделям"));
-  } else {
-    f.append(el("div", { class: "seg", role: "group", "aria-label": "Период" },
-      PERIODS.map(p => el("button", { type: "button", "aria-pressed": String(p.id === state.period),
-        onclick: () => { state.period = p.id; save(); render(); } }, p.label))));
-  }
-  if (state.tab === "unbooked") {
-    f.append(el("div", { class: "seg", role: "group", "aria-label": "Канал" },
-      [["all", "Все"], ["calls", "📞 Звонки"], ["messages", "💬 Переписки"]].map(([id, lab]) =>
-        el("button", { type: "button", "aria-pressed": String(id === state.channel),
-          onclick: () => { state.channel = id; render(); } }, lab))));
-    const search = el("input", { class: "search", type: "search", placeholder: "Телефон, имя, текст", value: state.query,
-                                 "aria-label": "Поиск" });
-    search.addEventListener("input", () => { state.query = search.value; renderContent(); });
-    f.append(search);
-  }
+  f.append(el("div", { class: "seg", role: "group", "aria-label": "Период" },
+    PERIODS.map(p => el("button", { type: "button", "aria-pressed": String(p.id === state.period),
+      onclick: () => { state.period = p.id; save(); render(); } }, p.label))));
 }
 
 function renderTabs() {
