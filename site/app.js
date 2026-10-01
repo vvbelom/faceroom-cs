@@ -735,7 +735,7 @@ function noteNode(n) {
     (n.issues || []).length ? el("ul", {}, n.issues.map(x => el("li", {}, x))) : null);
 }
 
-const PAGE = 100;
+const PAGE = 50;
 function peopleCard(ch, days) {
   const { rows, trimmed, untracked, firstMsgList } = peopleRows(ch, days);
   const filters = TAG_FILTERS[ch];
