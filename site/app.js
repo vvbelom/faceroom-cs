@@ -174,6 +174,13 @@ function firstDayWith(channel, field) {
   const days = Object.keys(DATA.conversion[channel]).sort();
   return days.find(d => Object.values(DATA.conversion[channel][d].studios || {}).some(r => field in r)) || null;
 }
+// То же самое для msgstats/ — там списки по отдельным людям (unanswered,
+// issues) появились позже агрегатов (n_unanswered, n_ai_issues), которые
+// используются в графике «Без ответа и замечания».
+function firstDayWithMsgstats(field) {
+  const days = Object.keys(DATA.msgstats || {}).sort();
+  return days.find(d => Object.values(DATA.msgstats[d].studios || {}).some(r => field in r)) || null;
+}
 
 function convTotals(channel, days, studio = state.studio) {
   const t = { clients: 0, booked: 0, excluded: 0, reasons: {}, primary: 0, primaryBooked: 0,
@@ -661,9 +668,12 @@ const tagMatches = (row, f) => f === "all" || row.tags.has(f) || (f === "issue" 
 function peopleRows(ch, days) {
   const out = [];
   let trimmed = false;
+  const firstMsgList = ch === "messages" ? firstDayWithMsgstats("unanswered") : null;
+  let untracked = false;
   for (const day of [...days].reverse()) {
     const conv = DATA.conversion[ch][day];
     if (conv && conv.lists_trimmed) trimmed = true;
+    if (firstMsgList && day < firstMsgList) untracked = true;
     const cs = ch === "calls" ? DATA.calls[day] : null;
     const ms = ch === "messages" ? (DATA.msgstats || {})[day] : null;
     for (const studio of studioNames()) {
@@ -709,7 +719,7 @@ function peopleRows(ch, days) {
       out.push(...byKey.values());
     }
   }
-  return { rows: out, trimmed };
+  return { rows: out, trimmed, untracked, firstMsgList };
 }
 
 function noteNode(n) {
@@ -727,7 +737,7 @@ function noteNode(n) {
 
 const PAGE = 100;
 function peopleCard(ch, days) {
-  const { rows, trimmed } = peopleRows(ch, days);
+  const { rows, trimmed, untracked, firstMsgList } = peopleRows(ch, days);
   const filters = TAG_FILTERS[ch];
   if (!filters.some(([id]) => id === state.tagFilter[ch])) state.tagFilter[ch] = "all";
   const card = el("div", { class: "card people" });
@@ -778,6 +788,8 @@ function peopleCard(ch, days) {
   draw();
   if (trimmed) card.append(el("p", { class: "cap", style: "margin-top:8px" },
     "Списки хранятся за последние 62 дня, по более ранним дням остались только цифры."));
+  if (untracked) card.append(el("p", { class: "cap", style: "margin-top:8px" },
+    `Без ответа и замечания по людям собираются с ${short(firstMsgList)} — за более ранние дни есть только общая доля, на графике выше.`));
   return card;
 }
 
