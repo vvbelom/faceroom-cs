@@ -491,18 +491,29 @@ function csvField(v) {
   const s = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
   return /[";\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-// Ячейка-то «12/14 86%» внутри — это текстовый узел «12/14» и соседний
-// <span class="pct">86%</span> БЕЗ пробела между ними в разметке: textContent
-// склеивает их в «12/1486%», а «12/14» в начале Excel принимает за дату и
-// показывает что попало. Поэтому разбираем ячейку по узлам, а не одной строкой.
+// Соседние узлы в ячейках часто идут без пробела в разметке (время и текст
+// заметки, дробь и процент, несколько заметок друг за другом) — textContent
+// просто склеивает их в один ком. Собираем ячейку по текстовым узлам
+// рекурсивно, вставляя пробел на каждой границе. «12/14» (дробь) Excel
+// норовит принять за дату — меняем «/» на «из» прямо в этом текстовом узле.
+function textParts(node) {
+  if (node.nodeType === 3) {
+    const t = node.nodeValue.trim();
+    if (!t) return [];
+    return [/^\d+\/\d+$/.test(t) ? t.replace("/", " из ") : t];
+  }
+  if (node.nodeType !== 1) return [];
+  if (node.classList.contains("stars")) { const t = node.getAttribute("title"); return t ? [t] : []; }
+  return [...node.childNodes].flatMap(textParts);
+}
 function cellCSV(td) {
-  const stars = td.querySelector(".stars");
-  if (stars) return csvField(stars.getAttribute("title") || "");
-  const parts = [...td.childNodes]
-    .map(n => (n.nodeType === 3 ? n.nodeValue : n.textContent).trim())
-    .filter(Boolean)
-    .map(t => (/^\d+\/\d+$/.test(t) ? t.replace("/", " из ") : t));
-  return csvField(parts.join(" "));
+  // «Кто требует внимания»: несколько заметок (.cm) в одной ячейке —
+  // разделяем явно, иначе читаются как одно предложение.
+  const notes = [...td.children].filter(c => c.classList.contains("cm"));
+  const raw = notes.length
+    ? notes.map(n => textParts(n).join(" ")).join(" | ")
+    : textParts(td).join(" ");
+  return csvField(raw);
 }
 function tableToCSV(container) {
   const tableEl = container.matches("table") ? container : container.querySelector("table");
