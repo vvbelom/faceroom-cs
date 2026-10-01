@@ -57,14 +57,7 @@ function plural(n, one, few, many) {
   return many;
 }
 
-function phoneLink(raw) {
-  const d = String(raw || "").replace(/\D/g, "");
-  if (!d) return null;
-  const pretty = d.length === 11 && d[0] === "7"
-    ? `+7 ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : `+${d}`;
-  return el("a", { href: `tel:+${d}` }, pretty);
-}
-// «Кто требует внимания»: телефон ведёт не на звонок, а в карточку клиента —
+// Телефон в таблицах ведёт не на звонок, а в карточку клиента —
 // запись разговора в Мегафоне или карточку в YClients. Аккаунт один на всю
 // сеть (поправьте MEGAFON_BASE/YCLIENTS_GROUP, если для каких-то студий он другой).
 const MEGAFON_BASE = "https://vats758751.megapbx.ru/#/history";
@@ -1022,7 +1015,7 @@ function listCard({ id, title, cap, head, rows, chips, hay, render }) {
 }
 const isNeg = r => r.stars ? r.stars <= 3 : r.rating <= 3;
 const clientCell = (phone, name) => el("td", { "data-l": "Клиент", class: "who" },
-  phoneLink(phone) || name || "—", phone && name ? el("span", { class: "nm" }, name) : null);
+  externalPhoneLink("messages", phone) || name || "—", phone && name ? el("span", { class: "nm" }, name) : null);
 
 function viewReviews(root) {
   const days = periodDays();
