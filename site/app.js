@@ -10,7 +10,7 @@
 
 let DATA = null;
 const state = { tab: "calls", studio: "", period: "cur_week", query: "",
-                tagFilter: { calls: "all", messages: "all" }, listFilter: {}, reviewsKind: "public", msgStudioView: "day" };
+                tagFilter: { calls: "all", messages: "all" }, listFilter: {}, reviewsKind: "public" };
 
 // ── Мелочи ─────────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -596,6 +596,7 @@ function convByStudio(ch, days, extra) {
     el("td", {}, t.primary ? frac(t.primaryBooked, t.primary) : "—"),
     withProblems ? el("td", {}, p.n_dialogs ? frac(p.n_unanswered, p.n_dialogs) : "—") : null,
     withProblems ? el("td", {}, p.n_dialogs ? frac(p.n_ai_issues, p.n_dialogs) : "—") : null,
+    withProblems ? el("td", {}, p.respMin === null ? "—" : `${ruNum(p.respMin)} мин`) : null,
     el("td", {}, String(t.excluded || "—"))];
   const rows = DATA.studios.map(s => {
     const t = convTotals(ch, days, s), p = msgTotals(days, s);
@@ -604,7 +605,7 @@ function convByStudio(ch, days, extra) {
   }).filter(Boolean);
   if (!rows.length) return null;
   rows.push(el("tr", { class: "total" }, el("td", {}, "Вся сеть"), cells(convTotals(ch, days), msgTotals(days))));
-  const tbl = table(["Студия", "Записались", "Первичные", ...(withProblems ? ["Без ответа", "С замечаниями"] : []), "Не считали"], rows);
+  const tbl = table(["Студия", "Записались", "Первичные", ...(withProblems ? ["Без ответа", "С замечаниями", "Ответ"] : []), "Не считали"], rows);
   return el("div", { class: "card" },
     el("div", { class: "card-head" }, el("h2", {}, "По студиям"),
       dlButton(`${ch === "calls" ? "звонки" : "переписки"}-по-студиям.csv`, () => tbl)),
@@ -928,47 +929,10 @@ function viewMessages(root) {
     root.append(el("div", { class: "grid2" }, weeklyDialogsChart(weeks), respChart));
   }
 
-  const byStudio = messagesStudioBlock(days, weeks);
+  const byStudio = convByStudio("messages", days);
   if (byStudio) root.append(byStudio);
   root.append(peopleCard("messages", days));
   root.append(convNote("messages", days));
-}
-
-// «По студиям» с переключателем День/Неделя. «День» — convByStudio за
-// выбранный период, как в «Звонках». «Неделя» — снимок за последнюю
-// ЗАКОНЧЕННУЮ неделю (так считает недельный отчёт) — раньше жил отдельной
-// таблицей в самом низу страницы, теперь просто другой режим той же.
-function messagesStudioBlock(days, weeks) {
-  const toggle = el("div", { class: "seg", style: "margin: 0 0 10px" },
-    [["day", "День"], ["week", "Неделя"]].map(([k, lab]) => el("button", { type: "button",
-      "aria-pressed": String(state.msgStudioView === k),
-      onclick: () => { state.msgStudioView = k; save(); renderContent(); } }, lab)));
-  if (state.msgStudioView !== "week") return convByStudio("messages", days, toggle);
-  if (state.studio) return null;
-  if (!weeks.length) return el("div", { class: "card" }, el("h2", {}, "По студиям"), toggle,
-    el("div", { class: "empty-box" }, "Нет недельной статистики"));
-
-  const last = weeks[weeks.length - 1].studios;
-  const rows = DATA.studios.filter(s => last[s]).map(s => {
-    const r = last[s];
-    return el("tr", { class: "click", onclick: () => setStudio(s) },
-      el("td", {}, s), el("td", {}, frac(r.n_new_bookings, r.n_dialogs)), el("td", {}, frac(r.n_first_time_booked, r.n_first_time)),
-      el("td", {}, String(r.n_unanswered)), el("td", {}, String(r.n_ai_issues)),
-      el("td", {}, `${ruNum((r.avg_response_sec || 0) / 60)} мин`));
-  });
-  const cw = (DATA.messages_quality.days || []).filter(x => x.date > weeks[weeks.length - 1].end);
-  let cwNote = null;
-  if (cw.length) {
-    const t = { n_dialogs: 0, n_new_bookings: 0 };
-    for (const x of cw) { const s = mqTotals(x.studios); t.n_dialogs += s.n_dialogs; t.n_new_bookings += s.n_new_bookings; }
-    cwNote = el("div", { class: "note-box", style: "margin: 10px 0 0" },
-      `Текущая неделя, ${cw.length} ${plural(cw.length, "день", "дня", "дней")}: ${t.n_dialogs} диалогов, ${t.n_new_bookings} записей — войдёт, когда закончится.`);
-  }
-  const tbl = table(["Студия", "Записи", "Первичные", "Без ответа", "Замечания", "Ответ"], rows);
-  return el("div", { class: "card" },
-    el("div", { class: "card-head" }, el("h2", {}, "По студиям"), dlButton("переписки-по-студиям-неделя.csv", () => tbl)),
-    el("p", { class: "cap" }, `Неделя ${weekLabel(weeks[weeks.length - 1])} · последняя полная · нажмите на студию, чтобы посмотреть только её`),
-    toggle, tbl, cwNote);
 }
 
 // ── Раздел «Отзывы» ────────────────────────────────────────────────────────
@@ -1166,7 +1130,7 @@ const TABS = [
 function setStudio(s) { state.studio = s; save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 function save() {
   try { localStorage.setItem("fr-cs-view", JSON.stringify({ tab: state.tab, studio: state.studio, period: state.period,
-    reviewsKind: state.reviewsKind, msgStudioView: state.msgStudioView })); }
+    reviewsKind: state.reviewsKind })); }
   catch (e) { /* не страшно */ }
 }
 function restore() {
@@ -1176,7 +1140,6 @@ function restore() {
     if (!v.studio || DATA.studios.includes(v.studio)) state.studio = v.studio || "";
     if (PERIODS.some(p => p.id === v.period)) state.period = v.period;
     if (v.reviewsKind === "chat" || v.reviewsKind === "public" || v.reviewsKind === "all") state.reviewsKind = v.reviewsKind;
-    if (v.msgStudioView === "day" || v.msgStudioView === "week") state.msgStudioView = v.msgStudioView;
   } catch (e) { /* по умолчанию */ }
 }
 
