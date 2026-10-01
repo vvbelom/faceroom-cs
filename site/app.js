@@ -220,12 +220,12 @@ function callTotals(days, studio = state.studio) {
 }
 
 // ── Плитки ─────────────────────────────────────────────────────────────────
-// delta: {now, before, unit: "pp"|"pct"|"abs", better: "up"|"down", label}
+// delta: {now, before, unit: "pp"|"pct"|"abs", better: "up"|"down", label, suffix?}
 function deltaNode(d) {
   if (!d || d.now === null || d.before === null || d.before === undefined) return null;
   let diff, text;
   if (d.unit === "pp") { diff = d.now - d.before; text = `${Math.abs(diff)} п.п.`; }
-  else if (d.unit === "abs") { diff = Math.round((d.now - d.before) * 10) / 10; text = ruNum(Math.abs(diff)); }
+  else if (d.unit === "abs") { diff = Math.round((d.now - d.before) * 10) / 10; text = ruNum(Math.abs(diff)) + (d.suffix || ""); }
   else {
     if (!d.before) return null;
     diff = Math.round(100 * (d.now - d.before) / d.before); text = `${Math.abs(diff)}%`;
@@ -623,7 +623,7 @@ function convByStudio(ch, days, extra) {
 // Проблемы переписок по дням (msgstats/): диалоги, без ответа, с замечаниями.
 function msgTotals(days, studio = state.studio) {
   const t = { n_dialogs: 0, n_unanswered: 0, n_ai_issues: 0, n_first_time: 0, daysWithData: 0 };
-  let resp = 0;
+  const resp = { sum: 0, weight: 0 };
   for (const day of days) {
     const snap = (DATA.msgstats || {})[day];
     if (!snap) continue;
@@ -632,12 +632,22 @@ function msgTotals(days, studio = state.studio) {
       if (studio && name !== studio) continue;
       t.n_dialogs += r.n_dialogs || 0; t.n_unanswered += r.n_unanswered || 0; t.n_ai_issues += r.n_ai_issues || 0;
       t.n_first_time += r.n_first_time || 0;
-      resp += (r.avg_response_sec || 0) * (r.n_dialogs || 0);
+      addResponse(resp, r, r.n_responses);
     }
   }
-  t.respMin = t.n_dialogs ? Math.round(resp / t.n_dialogs / 6) / 10 : null;
+  t.respMin = respMinutes(resp);
   return t;
 }
+// Время ответа — среднее до первой реакции администратора. Сеть и период
+// усредняются с весом: числом диалогов, где ответ был (n_responses, с
+// 01.10.2026), а для более ранних дней — числом диалогов. Студия без ответов
+// (avg_response_sec = null) в среднее не входит — иначе тянула бы его к нулю.
+function addResponse(acc, r, weight) {
+  if (typeof r.avg_response_sec !== "number") return;
+  const w = typeof weight === "number" ? weight : (r.n_dialogs || 0);
+  acc.sum += r.avg_response_sec * w; acc.weight += w;
+}
+const respMinutes = acc => (acc.weight ? Math.round(acc.sum / acc.weight / 6) / 10 : null);
 
 function convNote(ch, days) {
   const first = firstDayWith(ch, "no_booking_expected");
@@ -653,6 +663,7 @@ function convNote(ch, days) {
 // и комментарий. Тегов у строки может быть несколько: пропустили, не
 // перезвонили и не записался — это один и тот же человек.
 const TAGS = {
+  primary:    { label: "первичный", cls: "t-primary" },
   unbooked:   { label: "не записался", cls: "t-unbooked" },
   unanswered: { label: "не ответили", cls: "t-bad" },
   nocallback: { label: "не перезвонили", cls: "t-bad" },
@@ -660,8 +671,8 @@ const TAGS = {
   issue:      { label: "замечание", cls: "t-issue" },
 };
 const TAG_FILTERS = {
-  calls: [["all", "Все"], ["unbooked", "Не записались"], ["nocallback", "Не перезвонили"], ["issue", "Замечания"]],
-  messages: [["all", "Все"], ["unbooked", "Не записались"], ["unanswered", "Не ответили"], ["issue", "Замечания"]],
+  calls: [["all", "Все"], ["unbooked", "Не записались"], ["nocallback", "Не перезвонили"], ["issue", "Замечания"], ["primary", "Первичные"]],
+  messages: [["all", "Все"], ["unbooked", "Не записались"], ["unanswered", "Не ответили"], ["issue", "Замечания"], ["primary", "Первичные"]],
 };
 const tagMatches = (row, f) => f === "all" || row.tags.has(f) || (f === "issue" && row.tags.has("critical"));
 
@@ -670,10 +681,15 @@ function peopleRows(ch, days) {
   let trimmed = false;
   const firstMsgList = ch === "messages" ? firstDayWithMsgstats("unanswered") : null;
   let untracked = false;
+  // Кто именно первичный — в срезах конверсии с 01.10.2026 (primary_phones);
+  // раньше сохранялось только число первичных за день.
+  const firstPrimary = firstDayWith(ch, "primary_phones");
+  let primaryUntracked = false;
   for (const day of [...days].reverse()) {
     const conv = DATA.conversion[ch][day];
     if (conv && conv.lists_trimmed) trimmed = true;
     if (firstMsgList && day < firstMsgList) untracked = true;
+    if (conv && (!firstPrimary || day < firstPrimary)) primaryUntracked = true;
     const cs = ch === "calls" ? DATA.calls[day] : null;
     const ms = ch === "messages" ? (DATA.msgstats || {})[day] : null;
     for (const studio of studioNames()) {
@@ -685,9 +701,11 @@ function peopleRows(ch, days) {
         if (!r.name && name) r.name = name;
         return r;
       };
-      for (const u of ((conv && conv.studios) || {})[studio]?.unbooked || []) {
+      const cv = ((conv && conv.studios) || {})[studio] || {};
+      for (const u of cv.unbooked || []) {
         const r = row(u.phone, u.name);
         r.tags.add("unbooked");
+        if (u.primary) r.tags.add("primary");
         if (u.note) r.notes.push(u.note);
       }
       const s = ((cs && cs.studios) || {})[studio] || {};
@@ -713,13 +731,17 @@ function peopleRows(ch, days) {
       }
       // Заметка конверсии «без ответа — «…»» повторяет строку «не ответили»,
       // у которой есть ещё и время, — оставляем одну.
+      // «Первичный» — пометка к строке, а не причина в неё попасть: в таблице
+      // только те, с кем что-то не так.
+      const primaryPhones = new Set(cv.primary_phones || []);
       for (const r of byKey.values()) {
         if (r.tags.has("unanswered")) r.notes = r.notes.filter(n => !(typeof n === "string" && n.startsWith("без ответа")));
+        if (r.phone && primaryPhones.has(r.phone)) r.tags.add("primary");
       }
       out.push(...byKey.values());
     }
   }
-  return { rows: out, trimmed, untracked, firstMsgList };
+  return { rows: out, trimmed, untracked, firstMsgList, primaryUntracked, firstPrimary };
 }
 
 function noteNode(n) {
@@ -737,7 +759,7 @@ function noteNode(n) {
 
 const PAGE = 50;
 function peopleCard(ch, days) {
-  const { rows, trimmed, untracked, firstMsgList } = peopleRows(ch, days);
+  const { rows, trimmed, untracked, firstMsgList, primaryUntracked, firstPrimary } = peopleRows(ch, days);
   const filters = TAG_FILTERS[ch];
   if (!filters.some(([id]) => id === state.tagFilter[ch])) state.tagFilter[ch] = "all";
   const card = el("div", { class: "card people" });
@@ -790,6 +812,10 @@ function peopleCard(ch, days) {
     "Списки хранятся за последние 62 дня, по более ранним дням остались только цифры."));
   if (untracked) card.append(el("p", { class: "cap", style: "margin-top:8px" },
     `Без ответа и замечания по людям собираются с ${short(firstMsgList)} — за более ранние дни есть только общая доля, на графике выше.`));
+  if (primaryUntracked) card.append(el("p", { class: "cap", style: "margin-top:8px" },
+    firstPrimary
+      ? `Тег «первичный» ставится с ${short(firstPrimary)} — за более ранние дни известно только число первичных, без имён.`
+      : "Тег «первичный» начнёт ставиться со следующего отчёта — до этого сохранялось только число первичных, без имён."));
   return card;
 }
 
@@ -838,13 +864,13 @@ function viewCalls(root) {
 const MQ = ["n_dialogs", "n_new_bookings", "n_unanswered", "n_first_time", "n_first_time_booked", "n_ai_issues"];
 function mqTotals(rows) {
   const t = Object.fromEntries(MQ.map(f => [f, 0]));
-  let resp = 0;
+  const resp = { sum: 0, weight: 0 };
   for (const [name, r] of Object.entries(rows || {})) {
     if (state.studio && name !== state.studio) continue;
     for (const f of MQ) t[f] += r[f] || 0;
-    resp += (r.avg_response_sec || 0) * (r.n_dialogs || 0);
+    addResponse(resp, r);
   }
-  t.respMin = t.n_dialogs ? Math.round(resp / t.n_dialogs / 6) / 10 : null;
+  t.respMin = respMinutes(resp);
   return t;
 }
 const weekLabel = w => `${short(w.start)}–${short(w.end)}`;
@@ -855,14 +881,15 @@ const weekLabel = w => `${short(w.start)}–${short(w.end)}`;
 function dialogsChart() {
   const cd = chartDays();
   const pt = cd.map(d => ((DATA.msgstats || {})[d] ? msgTotals([d]) : null));
-  // Первичные по дням не показываем: в дневных срезах msgstats это поле не
-  // считается (n_first_time там всегда 0) — только в недельной агрегации.
+  // Первичные — n_first_time дневного среза msgstats (с 01.10.2026 пишется
+  // каждый вечер, за 06.07–30.09 восстановлен из истории дневной статистики).
   return el("div", { class: "card" },
     el("h2", {}, "Диалоги по дням"),
     el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
     chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
-            aria: "Диалоги по дням",
-            series: [{ name: "Все диалоги", color: "--messages", values: pt.map(t => (t ? t.n_dialogs : null)), fill: true }] }));
+            aria: "Диалоги по дням: всего и первичные",
+            series: [{ name: "Все диалоги", color: "--messages", values: pt.map(t => (t ? t.n_dialogs : null)), fill: true },
+                     { name: "Первичные", color: "--primary", values: pt.map(t => (t ? t.n_first_time : null)), dash: true }] }));
 }
 
 function msgProblemsChart() {
@@ -924,7 +951,9 @@ function viewMessages(root) {
            delta: { now: pct(p.n_ai_issues, p.n_dialogs), before: pb.n_dialogs ? pct(pb.n_ai_issues, pb.n_dialogs) : null,
                     unit: "pp", better: "down", label } }),
     convTile, primaryTile,
-    tile({ label: "Время ответа", value: p.respMin === null ? "—" : `${ruNum(p.respMin)} мин` })));
+    tile({ label: "Время ответа", value: p.respMin === null ? "—" : `${ruNum(p.respMin)} мин`,
+           sub: p.respMin === null ? "нет данных" : "в среднем до первого ответа",
+           delta: { now: p.respMin, before: pb.respMin, unit: "abs", suffix: " мин", better: "down", label } })));
 
   root.append(el("div", { class: "subgroup" }, "По дням"));
   root.append(el("div", { class: "grid2" }, dialogsChart(), convChart("messages"), msgProblemsChart()));
