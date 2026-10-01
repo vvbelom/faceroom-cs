@@ -491,10 +491,22 @@ function csvField(v) {
   const s = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
   return /[";\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
+// Ячейка-то «12/14 86%» внутри — это текстовый узел «12/14» и соседний
+// <span class="pct">86%</span> БЕЗ пробела между ними в разметке: textContent
+// склеивает их в «12/1486%», а «12/14» в начале Excel принимает за дату и
+// показывает что попало. Поэтому разбираем ячейку по узлам, а не одной строкой.
+function cellCSV(td) {
+  const stars = td.querySelector(".stars");
+  if (stars) return csvField(stars.getAttribute("title") || "");
+  const parts = [...td.childNodes]
+    .map(n => (n.nodeType === 3 ? n.nodeValue : n.textContent).trim())
+    .filter(Boolean)
+    .map(t => (/^\d+\/\d+$/.test(t) ? t.replace("/", " из ") : t));
+  return csvField(parts.join(" "));
+}
 function tableToCSV(container) {
   const tableEl = container.matches("table") ? container : container.querySelector("table");
-  const lines = [...tableEl.querySelectorAll("tr")].map(tr =>
-    [...tr.children].map(cell => csvField(cell.textContent)).join(";"));
+  const lines = [...tableEl.querySelectorAll("tr")].map(tr => [...tr.children].map(cellCSV).join(";"));
   return "﻿" + lines.join("\r\n");
 }
 function downloadCSV(filename, container) {
