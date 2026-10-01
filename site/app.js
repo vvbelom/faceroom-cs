@@ -782,9 +782,10 @@ function viewCalls(root) {
     el("h2", {}, "Звонки по дням"),
     el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
     chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
-            aria: "Звонки по дням: входящие и исходящие",
+            aria: "Звонки по дням: входящие, исходящие и первичные",
             series: [{ name: "Входящие", color: "--calls", values: cd.map(d => val(d, "in_total")), fill: true },
-                     { name: "Исходящие", color: "--accent", values: cd.map(d => val(d, "out_total")) }] }));
+                     { name: "Исходящие", color: "--accent", values: cd.map(d => val(d, "out_total")) },
+                     { name: "Первичные", color: "--primary", values: cd.map(d => (DATA.conversion.calls[d] ? convTotals("calls", [d]).primary : null)), dash: true }] }));
   root.append(el("div", { class: "grid2" }, callsCard, convChart("calls")));
   const byStudio = convByStudio("calls", days);
   if (byStudio) root.append(byStudio);
