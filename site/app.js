@@ -290,6 +290,13 @@ function forEachRun(values, point, fn) {
   });
   if (run.length) fn(run);
 }
+// То же самое, но возвращает массив кусков — нужен, чтобы соединить соседние
+// куски пунктирным «мостиком» через пропуск, а не оставлять пустоту.
+function buildRuns(values, point) {
+  const runs = [];
+  forEachRun(values, point, run => runs.push(run));
+  return runs;
+}
 
 function chart(opts) {
   // opts: {kind: "line"|"stack", labels, series: [{name, color, values, detail?}], yMax, fmt, height, tipTitle}
@@ -393,12 +400,21 @@ function drawChart(box, o) {
       });
     });
     o.series.forEach(s => {
+      const runs = buildRuns(s.values, (i, v) => ({ x: x(i), y: y(v) }));
       let d = "";
-      forEachRun(s.values, (i, v) => ({ x: x(i), y: y(v) }), pts => { d += monotonePath(pts); });
+      runs.forEach(pts => { d += monotonePath(pts); });
       const lineAttrs = { d, fill: "none", stroke: `var(${s.color})`, "stroke-width": 2,
                           "stroke-linejoin": "round", "stroke-linecap": "round" };
       if (s.dash) lineAttrs["stroke-dasharray"] = "6 5";
       svg.append(svgEl("path", lineAttrs));
+      // Мостики через пропуски — нейтральным серым (--axis), а не цветом
+      // серии: иначе при редких данных почти вся линия становится пунктирной
+      // и перестаёт читаться как «тут данных не было».
+      for (let i = 0; i < runs.length - 1; i++) {
+        const a = runs[i][runs[i].length - 1], b = runs[i + 1][0];
+        svg.append(svgEl("path", { d: `M${a.x},${a.y} L${b.x},${b.y}`, fill: "none", stroke: "var(--axis)",
+          "stroke-width": 2, "stroke-linecap": "round", "stroke-dasharray": "6 5" }));
+      }
       const dots = n <= 16;
       s.values.forEach((v, i) => {
         if (v === null || v === undefined) return;
@@ -769,14 +785,14 @@ function viewCalls(root) {
 
   const cd = chartDays();
   const val = (d, f) => (DATA.calls[d] ? callTotals([d])[f] : null);
-  const incomingCard = el("div", { class: "card" },
-    el("h2", {}, "Входящие по дням"),
+  const callsCard = el("div", { class: "card" },
+    el("h2", {}, "Звонки по дням"),
     el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
-    chart({ kind: "stack", labels: cd.map(short), tipTitle: i => longDay(cd[i]), totalName: "всего",
-            aria: "Входящие звонки по дням: принято и пропущено",
-            series: [{ name: "Принято", color: "--neutral", values: cd.map(d => { const v = val(d, "in_total"); return v === null ? null : v - val(d, "in_missed"); }) },
-                     { name: "⚠ Пропущено", color: "--bad", values: cd.map(d => val(d, "in_missed")) }] }));
-  root.append(el("div", { class: "grid2" }, incomingCard, convChart("calls")));
+    chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
+            aria: "Звонки по дням: входящие и исходящие",
+            series: [{ name: "Входящие", color: "--calls", values: cd.map(d => val(d, "in_total")), fill: true },
+                     { name: "Исходящие", color: "--accent", values: cd.map(d => val(d, "out_total")) }] }));
+  root.append(el("div", { class: "grid2" }, callsCard, convChart("calls")));
   const byStudio = convByStudio("calls", days);
   if (byStudio) root.append(byStudio);
   root.append(peopleCard("calls", days));
@@ -1059,7 +1075,7 @@ function viewReviews(root) {
   root.append(el("div", { class: "subgroup" }, "По дням"));
   root.append(el("div", { class: "grid2" },
     el("div", { class: "card" }, el("h2", {}, `${what} по дням`), el("p", { class: "cap" }, dailyCap),
-      chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
+      chart({ kind: "stack", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true, totalName: "всего",
               aria: `${what} по дням: количество`,
               series: [{ name: "4–5★", color: "--primary", values: cd.map(d => reviewBucket([d], true)) },
                        { name: "⚠ 1–3★", color: "--bad", values: cd.map(d => reviewBucket([d], false)) }] })),
@@ -1076,7 +1092,7 @@ function viewReviews(root) {
   root.append(el("div", { class: "subgroup" }, "По неделям · долгосрочный тренд"));
   root.append(el("div", { class: "grid2" },
     el("div", { class: "card" }, el("h2", {}, `${what} по неделям`), el("p", { class: "cap" }, weeksCap),
-      chart({ kind: "line", labels: weeks.map(short), tipTitle: i => `Неделя с ${short(weeks[i])}`, integer: true,
+      chart({ kind: "stack", labels: weeks.map(short), tipTitle: i => `Неделя с ${short(weeks[i])}`, integer: true, totalName: "всего",
               aria: `${what} по неделям: количество`,
               series: [{ name: "4–5★", color: "--primary", values: weeks.map(w => reviewBucket(weekDays(w), true)) },
                        { name: "⚠ 1–3★", color: "--bad", values: weeks.map(w => reviewBucket(weekDays(w), false)) }] })),
