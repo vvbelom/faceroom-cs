@@ -81,3 +81,6 @@ jobs:
             curl --silent --show-error --ftp-pasv --disable-epsv --connect-timeout 20 --retry 3 \
               -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" -T "$f" "ftp://ftp.fac2790745.nichost.ru/$f"
           done
+          echo "---- содержимое директории на сервере после выгрузки ----"
+          curl --silent --show-error --ftp-pasv --disable-epsv -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" \
+            --list-only "ftp://ftp.fac2790745.nichost.ru/"
