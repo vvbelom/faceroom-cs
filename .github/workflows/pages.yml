@@ -69,11 +69,15 @@ jobs:
       - name: Продублировать index.html как index.php (для Bitrix)
         run: cp site/index.html site/index.php
 
+      # SamKirkland/FTP-Deploy-Action (basic-ftp внутри) на этом хосте падает
+      # с ECONNRESET: пытается EPSV/passive-IPv6, а у хоста только IPv4-адрес
+      # (проверено — AAAA-записи нет), сам экшен способа отключить EPSV не
+      # даёт. curl с --disable-epsv работает надёжно — обычный PASV по IPv4.
       - name: Выгрузить на face-room.ru/cs/ (FTP)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ftp.fac2790745.nichost.ru
-          username: fac2790745_cs
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./site/
-          server-dir: ./
+        run: |
+          cd site
+          for f in *; do
+            echo "→ $f"
+            curl --silent --show-error --ftp-pasv --disable-epsv --connect-timeout 20 --retry 3 \
+              -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" -T "$f" "ftp://ftp.fac2790745.nichost.ru/$f"
+          done
