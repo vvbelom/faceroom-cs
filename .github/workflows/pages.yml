@@ -10,6 +10,12 @@ name: Публикация страницы
 #
 # Выкладка идёт только с main: окружение github-pages разрешает деплой с неё.
 # repository_dispatch и schedule всегда запускаются на основной ветке.
+#
+# Второй канал публикации — та же самая site/ (уже со свежими данными) ещё и
+# по FTP на домен компании, https://face-room.ru/cs/. Там Bitrix: директория
+# резолвится в index.php, а не index.html (index.html отдаёт 404), поэтому
+# перед выгрузкой копируем index.html в index.php — страница статическая,
+# расширение .php ей не мешает, сервер просто отдаёт файл как есть.
 
 on:
   push:
@@ -59,3 +65,15 @@ jobs:
 
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Продублировать index.html как index.php (для Bitrix)
+        run: cp site/index.html site/index.php
+
+      - name: Выгрузить на face-room.ru/cs/ (FTP)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ftp.fac2790745.nichost.ru
+          username: fac2790745_cs
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./site/
+          server-dir: ./
