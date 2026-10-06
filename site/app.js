@@ -10,7 +10,7 @@
 
 let DATA = null;
 const state = { tab: "calls", studio: "", period: "cur_week", query: "",
-                tagFilter: { calls: "all", messages: "all" }, listFilter: {}, reviewsKind: "public" };
+                tagFilter: { calls: "all", messages: "all" }, listFilter: {}, reviewsKind: "public", admin: "" };
 
 // ── Мелочи ─────────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -1161,11 +1161,191 @@ function viewReviews(root) {
   }
 }
 
+// ── Раздел «Администраторы» ────────────────────────────────────────────────
+// Просьба заказчицы 06.10.2026: личная динамика администраторов. Звонки и
+// переписки у нас считаются по студии за день, а не по человеку, поэтому день
+// студии приписывается тому, кто стоит на него в графике YClients (Филиал →
+// Настройки → График работы). Двое в графике за день — день идёт обоим и
+// считается «сменой вдвоём». Строка таблицы — человек в студии: в разных
+// студиях разная база, сравнивать имеет смысл внутри одной.
+const shiftData = () => DATA.shifts || null;
+const shiftsOn = (day, studio) => ((shiftData().days || {})[day] || {})[studio] || [];
+const personName = who => ((shiftData().people || {})[who] || {}).name || "без имени";
+const inShiftRange = day => { const s = shiftData(); return !!s && day >= s.from && day <= s.to; };
+
+function adminAcc() {
+  return { shifts: 0, shared: 0, cClients: 0, cBooked: 0, cIssues: 0, cAnalyzed: 0, cDays: 0, noCallback: 0,
+           mClients: 0, mBooked: 0, dialogs: 0, unanswered: 0, msgIssues: 0, resp: { sum: 0, weight: 0 } };
+}
+// Добавляет в накопитель день студии: все её показатели за этот день.
+function addStudioDay(a, day, studio) {
+  const cc = ((DATA.conversion.calls[day] || {}).studios || {})[studio];
+  if (cc) { a.cClients += cc.clients || 0; a.cBooked += cc.booked || 0; }
+  const cs = DATA.calls[day], st = ((cs || {}).studios || {})[studio];
+  if (st) {
+    a.cDays++;
+    a.noCallback += (st.missed_no_callback || []).length;
+    // Восстановленные задним числом дни (01–24.09) — без разбора разговоров.
+    if (cs.source !== "backfill") { a.cIssues += (st.issues || []).length; a.cAnalyzed++; }
+  }
+  const mc = ((DATA.conversion.messages[day] || {}).studios || {})[studio];
+  if (mc) { a.mClients += mc.clients || 0; a.mBooked += mc.booked || 0; }
+  const ms = (((DATA.msgstats || {})[day] || {}).studios || {})[studio];
+  if (ms) {
+    a.dialogs += ms.n_dialogs || 0; a.unanswered += ms.n_unanswered || 0; a.msgIssues += ms.n_ai_issues || 0;
+    addResponse(a.resp, ms, ms.n_responses);
+  }
+}
+
+// Администраторы за дни: Map «кто|студия» → {who, studio, acc, days}.
+// Плюс дни студий без администратора в графике — их показатели ни на кого не
+// записываются, и это надо показать, а не потерять молча.
+function adminRows(days) {
+  const rows = new Map(), unassigned = {};
+  for (const day of days) {
+    if (!inShiftRange(day)) continue;
+    for (const studio of studioNames()) {
+      if ((shiftData().failed || []).includes(studio)) continue;
+      const on = shiftsOn(day, studio);
+      if (!on.length) {
+        const hasData = (DATA.conversion.calls[day] || {}).studios?.[studio] || (DATA.msgstats || {})[day]?.studios?.[studio];
+        if (hasData) unassigned[studio] = (unassigned[studio] || 0) + 1;
+        continue;
+      }
+      for (const s of on) {
+        const key = `${s.who}|${studio}`;
+        if (!rows.has(key)) rows.set(key, { key, who: s.who, studio, acc: adminAcc(), days: [] });
+        const r = rows.get(key);
+        r.acc.shifts++;
+        if (on.length > 1) r.acc.shared++;
+        r.days.push(day);
+        addStudioDay(r.acc, day, studio);
+      }
+    }
+  }
+  const order = s => (DATA.studios.indexOf(s) + 1 || 99);
+  return { rows: [...rows.values()].sort((a, b) => order(a.studio) - order(b.studio) || b.acc.shifts - a.acc.shifts),
+           unassigned };
+}
+function studioAcc(days, studio) {
+  const a = adminAcc();
+  for (const day of days) for (const s of studio ? [studio] : studioNames()) addStudioDay(a, day, s);
+  return a;
+}
+
+const perShift = (n, shifts) => (shifts ? ruNum(Math.round(10 * n / shifts) / 10) : "—");
+function adminCells(a) {
+  const resp = respMinutes(a.resp);
+  return [
+    el("td", { "data-l": "Смен" }, String(a.shifts), a.shared ? el("span", { class: "pct" }, `вдвоём ${a.shared}`) : null),
+    el("td", { "data-l": "Звонки · записались" }, frac(a.cBooked, a.cClients)),
+    el("td", { "data-l": "Замечания по звонкам" }, a.cAnalyzed ? [String(a.cIssues), el("span", { class: "pct" }, `${perShift(a.cIssues, a.cAnalyzed)} за смену`)] : "—"),
+    el("td", { "data-l": "Не перезвонили" }, a.cDays ? String(a.noCallback) : "—"),
+    el("td", { "data-l": "Переписки · записались" }, frac(a.mBooked, a.mClients)),
+    el("td", { "data-l": "Без ответа" }, a.dialogs ? frac(a.unanswered, a.dialogs) : "—"),
+    el("td", { "data-l": "С замечаниями" }, a.dialogs ? frac(a.msgIssues, a.dialogs) : "—"),
+    el("td", { "data-l": "Ответ" }, resp === null ? "—" : `${ruNum(resp)} мин`),
+  ];
+}
+const ADMIN_HEAD = ["Администратор", "Смен", "Звонки · записались", "Замечания по звонкам", "Не перезвонили",
+                    "Переписки · записались", "Без ответа", "С замечаниями", "Ответ"];
+
+// Личная динамика: последние 12 недель по сменам этого человека в этой
+// студии, независимо от периода сверху — как «по неделям» в других разделах.
+function adminTrend(r) {
+  const lastMon = mondayOf(yesterday());
+  const weeks = Array.from({ length: 12 }, (_, i) => addDays(lastMon, -7 * (11 - i)));
+  const accs = weeks.map(w => {
+    const a = adminAcc();
+    for (const day of dayRange(w, addDays(w, 6))) {
+      if (!inShiftRange(day) || !shiftsOn(day, r.studio).some(s => s.who === r.who)) continue;
+      a.shifts++;
+      addStudioDay(a, day, r.studio);
+    }
+    return a.shifts ? a : null;
+  });
+  const val = f => accs.map(a => (a ? f(a) : null));
+  const share = (num, den) => val(a => (a[den] ? pct(a[num], a[den]) : null));
+  const detail = (num, den) => val(a => (a[den] ? `${a[num]} из ${a[den]} · ${a.shifts} ${plural(a.shifts, "смена", "смены", "смен")}` : null));
+  const labels = weeks.map(short), tipTitle = i => `Неделя с ${short(weeks[i])}`;
+  const cap = `${personName(r.who)} · ${r.studio} · по неделям, только его смены`;
+  const card = (title, c) => el("div", { class: "card" }, el("h2", {}, title), el("p", { class: "cap" }, cap), c);
+  return el("div", { class: "grid2" },
+    card("Конверсия в запись, %", chart({ kind: "line", labels, tipTitle, yMax: 100, fmt: v => `${ruNum(v)}%`,
+      aria: "Конверсия в запись по неделям: звонки и переписки",
+      series: [{ name: "Звонки", color: "--calls", values: share("cBooked", "cClients"), detail: detail("cBooked", "cClients") },
+               { name: "Переписки", color: "--messages", values: share("mBooked", "mClients"), detail: detail("mBooked", "mClients") }] })),
+    card("Переписки: без ответа и замечания, %", chart({ kind: "line", labels, tipTitle, fmt: v => `${ruNum(v)}%`,
+      aria: "Доля переписок без ответа и с замечаниями по неделям",
+      series: [{ name: "⚠ Без ответа", color: "--bad", values: share("unanswered", "dialogs"), detail: detail("unanswered", "dialogs") },
+               { name: "Замечания", color: "--issue", values: share("msgIssues", "dialogs"), detail: detail("msgIssues", "dialogs") }] })),
+    card("Время ответа в переписках, мин", chart({ kind: "line", labels, tipTitle, fmt: ruNum,
+      aria: "Среднее время ответа по неделям",
+      series: [{ name: "минут", color: "--messages", values: val(a => respMinutes(a.resp)) }] })),
+    card("Звонки: замечания и не перезвонили, за смену", chart({ kind: "line", labels, tipTitle, fmt: ruNum,
+      aria: "Замечания по звонкам и пропущенные без перезвона за смену, по неделям",
+      series: [{ name: "Замечания", color: "--issue", values: val(a => (a.cAnalyzed ? Math.round(10 * a.cIssues / a.cAnalyzed) / 10 : null)),
+                 detail: val(a => (a.cAnalyzed ? `${a.cIssues} за ${a.cAnalyzed} ${plural(a.cAnalyzed, "смену", "смены", "смен")}` : null)) },
+               { name: "⚠ Не перезвонили", color: "--bad", values: val(a => (a.cDays ? Math.round(10 * a.noCallback / a.cDays) / 10 : null)),
+                 detail: val(a => (a.cDays ? `${a.noCallback} за ${a.cDays} ${plural(a.cDays, "смену", "смены", "смен")}` : null)) }] })));
+}
+
+function viewAdmins(root) {
+  if (!shiftData()) {
+    root.append(el("div", { class: "empty-box" },
+      "График администраторов из YClients пока не загружен — раздел заполнится со следующим обновлением данных."));
+    return;
+  }
+  const days = periodDays();
+  const { rows, unassigned } = adminRows(days);
+  const card = el("div", { class: "card people" });
+  const body = el("div", {});
+  card.append(el("div", { class: "card-head" }, el("h2", {}, "Администраторы"),
+      dlButton("администраторы.csv", () => body)),
+    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(days)} · смены по графику YClients · нажмите на строку — личная динамика`),
+    body);
+  if (!rows.length) {
+    body.append(el("div", { class: "empty-box" }, "В графике YClients за этот период нет смен администраторов"));
+  } else {
+    const total = studioAcc(days.filter(inShiftRange), state.studio);
+    total.shifts = sum(rows.map(r => r.acc.shifts));
+    const tr = rows.map(r => el("tr", { class: `click${state.admin === r.key ? " sel" : ""}`,
+        onclick: () => { state.admin = state.admin === r.key ? "" : r.key; renderContent();
+                         if (state.admin) $("#admin-trend")?.scrollIntoView({ behavior: "smooth", block: "start" }); } },
+      el("td", { "data-l": "Администратор", class: "who" }, personName(r.who), el("span", { class: "nm" }, r.studio)),
+      adminCells(r.acc)));
+    tr.push(el("tr", { class: "total" }, el("td", { "data-l": "", class: "who" }, state.studio || "Вся сеть",
+      el("span", { class: "nm" }, "все дни, для сравнения")), adminCells(total)));
+    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl adm" },
+      el("thead", {}, el("tr", {}, ADMIN_HEAD.map(h => el("th", {}, h)))), el("tbody", {}, tr))));
+  }
+  root.append(card);
+
+  const gaps = Object.entries(unassigned);
+  if (gaps.length) root.append(el("div", { class: "note-box" },
+    `Нет администратора в графике YClients: ${gaps.map(([s, n]) => `${s} — ${n} ${plural(n, "день", "дня", "дней")}`).join(", ")}. ` +
+    "Показатели этих дней ни на кого не записаны — проверьте график работы в YClients."));
+  if ((shiftData().failed || []).length) root.append(el("div", { class: "note-box" },
+    `YClients не отдал график: ${shiftData().failed.join(", ")} — эти студии сейчас без администраторов.`));
+
+  const sel = rows.find(r => r.key === state.admin);
+  if (sel) {
+    root.append(el("div", { class: "subgroup", id: "admin-trend" }, `${personName(sel.who)} · динамика`));
+    root.append(adminTrend(sel));
+  }
+  root.append(el("div", { class: "note-box" },
+    "Звонки и переписки считаются по студии за день, поэтому день приписывается администратору, который стоит в графике " +
+    "работы YClients (Филиал → Настройки → График работы). Если в графике двое — день засчитан обоим («вдвоём»). " +
+    "Замечания по звонкам — разговоры, где модель нашла ошибки администратора; за смену — в среднем на день с разбором звонков. " +
+    "Строка «Вся сеть» или студии — все дни периода, для сравнения."));
+}
+
 // ── Каркас ─────────────────────────────────────────────────────────────────
 const TABS = [
   { id: "calls", label: "Звонки", view: viewCalls },
   { id: "messages", label: "Переписки", view: viewMessages },
   { id: "reviews", label: "Отзывы", view: viewReviews },
+  { id: "admins", label: "Администраторы", view: viewAdmins },
 ];
 
 function setStudio(s) { state.studio = s; save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
