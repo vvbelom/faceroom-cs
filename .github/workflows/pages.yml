@@ -84,3 +84,10 @@ jobs:
           echo "---- содержимое директории на сервере после выгрузки ----"
           curl --silent --show-error --ftp-pasv --disable-epsv -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" \
             --list-only "ftp://ftp.fac2790745.nichost.ru/"
+          echo "---- проверка: читаем файлы обратно по FTP и сверяем с тем, что выгружали (мимо HTTP-кеша) ----"
+          mkdir -p /tmp/ftp-check
+          for f in *; do
+            curl --silent --show-error --ftp-pasv --disable-epsv -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" \
+              "ftp://ftp.fac2790745.nichost.ru/$f" -o "/tmp/ftp-check/$f"
+            if cmp -s "$f" "/tmp/ftp-check/$f"; then echo "✅ $f — совпадает"; else echo "❌ $f — ОТЛИЧАЕТСЯ от выгруженного"; fi
+          done
