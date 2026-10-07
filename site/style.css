@@ -282,6 +282,12 @@ table.ppl tr.neg td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
 table.ppl tr.sel td { background: var(--accent-soft); }
 table.ppl.adm td { white-space: nowrap; }
 table.ppl.adm td.who { white-space: normal; min-width: 150px; }
+/* «Звонки»/«Переписки» — общий заголовок на группу колонок; вертикальная
+   черта отмечает начало каждой группы. Только на десктопе: на мобильном
+   thead скрыт и td идут блоками, разделитель там не нужен. */
+@media (min-width: 641px) {
+  table.ppl.adm th.grp, table.ppl.adm td.grp { border-left: 1px solid var(--line); }
+}
 @media (max-width: 640px) {
   table.ppl.adm td::before { min-width: 168px; }
   table.ppl.adm td.who::before { display: none; }

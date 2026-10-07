@@ -522,10 +522,32 @@ function cellCSV(td) {
     : textParts(td).join(" ");
   return csvField(raw);
 }
+// Раскладывает строки таблицы в прямоугольную сетку, учитывая rowspan/colspan
+// (нужно для двухрядного заголовка «Администраторов» — группы «Звонки»/
+// «Переписки» над своими колонками): объединённая ячейка пишется один раз,
+// остальные клетки, которые она перекрывает, остаются пустыми — как Excel
+// сам показывает объединённые ячейки. Для таблиц без span ничего не меняет.
 function tableToCSV(container) {
   const tableEl = container.matches("table") ? container : container.querySelector("table");
-  const lines = [...tableEl.querySelectorAll("tr")].map(tr => [...tr.children].map(cellCSV).join(";"));
-  return "﻿" + lines.join("\r\n");
+  const grid = [];
+  [...tableEl.querySelectorAll("tr")].forEach((tr, r) => {
+    grid[r] = grid[r] || [];
+    let col = 0;
+    for (const cell of tr.children) {
+      while (grid[r][col] !== undefined) col++;
+      const text = cellCSV(cell);
+      const cs = parseInt(cell.getAttribute("colspan") || "1", 10);
+      const rs = parseInt(cell.getAttribute("rowspan") || "1", 10);
+      for (let i = 0; i < cs; i++) {
+        for (let j = 0; j < rs; j++) {
+          grid[r + j] = grid[r + j] || [];
+          grid[r + j][col + i] = i === 0 && j === 0 ? text : "";
+        }
+      }
+      col += cs;
+    }
+  });
+  return "﻿" + grid.map(row => row.join(";")).join("\r\n");
 }
 function downloadCSV(filename, container) {
   const blob = new Blob([tableToCSV(container)], { type: "text/csv;charset=utf-8;" });
@@ -1174,7 +1196,7 @@ const personName = who => ((shiftData().people || {})[who] || {}).name || "бе�
 const inShiftRange = day => { const s = shiftData(); return !!s && day >= s.from && day <= s.to; };
 
 function adminAcc() {
-  return { shifts: 0, shared: 0, cClients: 0, cBooked: 0, cIssues: 0, cAnalyzed: 0, cDays: 0, noCallback: 0,
+  return { shifts: 0, shared: 0, cClients: 0, cBooked: 0, cIssues: 0, cAnalyzed: 0, cCalls: 0, cDays: 0, noCallback: 0, cMissed: 0,
            mClients: 0, mBooked: 0, dialogs: 0, unanswered: 0, msgIssues: 0, resp: { sum: 0, weight: 0 } };
 }
 // Добавляет в накопитель день студии: все её показатели за этот день.
@@ -1185,8 +1207,12 @@ function addStudioDay(a, day, studio) {
   if (st) {
     a.cDays++;
     a.noCallback += (st.missed_no_callback || []).length;
+    a.cMissed += st.in_missed || 0;
     // Восстановленные задним числом дни (01–24.09) — без разбора разговоров.
-    if (cs.source !== "backfill") { a.cIssues += (st.issues || []).length; a.cAnalyzed++; }
+    if (cs.source !== "backfill") {
+      a.cIssues += (st.issues || []).length; a.cAnalyzed++;
+      a.cCalls += (st.in_total || 0) + (st.out_total || 0);
+    }
   }
   const mc = ((DATA.conversion.messages[day] || {}).studios || {})[studio];
   if (mc) { a.mClients += mc.clients || 0; a.mBooked += mc.booked || 0; }
@@ -1233,22 +1259,30 @@ function studioAcc(days, studio) {
   return a;
 }
 
-const perShift = (n, shifts) => (shifts ? ruNum(Math.round(10 * n / shifts) / 10) : "—");
 function adminCells(a) {
   const resp = respMinutes(a.resp);
   return [
     el("td", { "data-l": "Смен" }, String(a.shifts), a.shared ? el("span", { class: "pct" }, `вдвоём ${a.shared}`) : null),
-    el("td", { "data-l": "Звонки · записались" }, frac(a.cBooked, a.cClients)),
-    el("td", { "data-l": "Замечания по звонкам" }, a.cAnalyzed ? [String(a.cIssues), el("span", { class: "pct" }, `${perShift(a.cIssues, a.cAnalyzed)} за смену`)] : "—"),
-    el("td", { "data-l": "Не перезвонили" }, a.cDays ? String(a.noCallback) : "—"),
-    el("td", { "data-l": "Переписки · записались" }, frac(a.mBooked, a.mClients)),
+    el("td", { "data-l": "Звонки · записались", class: "grp" }, frac(a.cBooked, a.cClients)),
+    el("td", { "data-l": "Замечания по звонкам" }, a.cAnalyzed ? frac(a.cIssues, a.cCalls) : "—"),
+    el("td", { "data-l": "Не перезвонили" }, a.cMissed ? frac(a.noCallback, a.cMissed) : "—"),
+    el("td", { "data-l": "Переписки · записались", class: "grp" }, frac(a.mBooked, a.mClients)),
     el("td", { "data-l": "Без ответа" }, a.dialogs ? frac(a.unanswered, a.dialogs) : "—"),
     el("td", { "data-l": "С замечаниями" }, a.dialogs ? frac(a.msgIssues, a.dialogs) : "—"),
     el("td", { "data-l": "Ответ" }, resp === null ? "—" : `${ruNum(resp)} мин`),
   ];
 }
-const ADMIN_HEAD = ["Администратор", "Смен", "Звонки · записались", "Замечания по звонкам", "Не перезвонили",
-                    "Переписки · записались", "Без ответа", "С замечаниями", "Ответ"];
+// Два ряда заголовков: «Звонки»/«Переписки» группируют свои колонки одной
+// подписью сверху, чтобы не повторять слово в каждом заголовке колонки.
+function adminHead() {
+  return el("thead", {},
+    el("tr", {},
+      el("th", { rowspan: "2" }, "Администратор"), el("th", { rowspan: "2" }, "Смен"),
+      el("th", { colspan: "3", class: "grp" }, "Звонки"), el("th", { colspan: "4", class: "grp" }, "Переписки")),
+    el("tr", {},
+      el("th", { class: "grp" }, "Записи"), el("th", {}, "Замечания"), el("th", {}, "Не перезвонили"),
+      el("th", { class: "grp" }, "Записи"), el("th", {}, "Без ответа"), el("th", {}, "С замечаниями"), el("th", {}, "Ответ")));
+}
 
 // Личная динамика: последние 12 недель по сменам этого человека в этой
 // студии, независимо от периода сверху — как «по неделям» в других разделах.
@@ -1316,8 +1350,7 @@ function viewAdmins(root) {
       adminCells(r.acc)));
     tr.push(el("tr", { class: "total" }, el("td", { "data-l": "", class: "who" }, state.studio || "Вся сеть",
       el("span", { class: "nm" }, "все дни, для сравнения")), adminCells(total)));
-    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl adm" },
-      el("thead", {}, el("tr", {}, ADMIN_HEAD.map(h => el("th", {}, h)))), el("tbody", {}, tr))));
+    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl adm" }, adminHead(), el("tbody", {}, tr))));
   }
   root.append(card);
 
