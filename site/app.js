@@ -1316,12 +1316,39 @@ function adminTrend(r) {
     card("Время ответа в переписках, мин", chart({ kind: "line", labels, tipTitle, fmt: ruNum,
       aria: "Среднее время ответа по неделям",
       series: [{ name: "минут", color: "--messages", values: val(a => respMinutes(a.resp)) }] })),
-    card("Звонки: замечания и не перезвонили, за смену", chart({ kind: "line", labels, tipTitle, fmt: ruNum,
-      aria: "Замечания по звонкам и пропущенные без перезвона за смену, по неделям",
-      series: [{ name: "Замечания", color: "--issue", values: val(a => (a.cAnalyzed ? Math.round(10 * a.cIssues / a.cAnalyzed) / 10 : null)),
-                 detail: val(a => (a.cAnalyzed ? `${a.cIssues} за ${a.cAnalyzed} ${plural(a.cAnalyzed, "смену", "смены", "смен")}` : null)) },
-               { name: "⚠ Не перезвонили", color: "--bad", values: val(a => (a.cDays ? Math.round(10 * a.noCallback / a.cDays) / 10 : null)),
-                 detail: val(a => (a.cDays ? `${a.noCallback} за ${a.cDays} ${plural(a.cDays, "смену", "смены", "смен")}` : null)) }] })));
+    card("Звонки: замечания и не перезвонили, %", chart({ kind: "line", labels, tipTitle, fmt: v => `${ruNum(v)}%`,
+      aria: "Доля звонков с замечаниями и доля пропущенных без перезвона по неделям",
+      series: [{ name: "Замечания", color: "--issue", values: share("cIssues", "cCalls"), detail: detail("cIssues", "cCalls") },
+               { name: "⚠ Не перезвонили", color: "--bad", values: share("noCallback", "cMissed"), detail: detail("noCallback", "cMissed") }] })));
+}
+
+// Конкретные случаи (не агрегаты): те же данные, что в общей «Кто требует
+// внимания», но отфильтрованные на смены этого администратора — r.days и
+// r.studio пришли из adminRows() для текущего периода сверху.
+function adminIssuesCard(r) {
+  const rowsOf = ch => peopleRows(ch, r.days).rows.filter(x => x.studio === r.studio).map(x => ({ ...x, ch }));
+  const rows = [...rowsOf("calls"), ...rowsOf("messages")].sort((a, b) => b.day.localeCompare(a.day));
+  const body = el("div", {});
+  const card = el("div", { class: "card people" });
+  card.append(el("div", { class: "card-head" }, el("h2", {}, "Ошибки и пропуски"),
+      rows.length ? dlButton("ошибки-администратора.csv", () => body) : null),
+    el("p", { class: "cap" }, `${personName(r.who)} · ${r.studio} · его смены за ${periodCaption(r.days)}`));
+  if (!rows.length) {
+    body.append(el("div", { class: "empty-box" }, "За эти смены ошибок и пропусков не найдено"));
+  } else {
+    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
+      el("thead", {}, el("tr", {}, ["Дата", "Канал", "Клиент", "Теги", "Комментарий"].map(h => el("th", {}, h)))),
+      el("tbody", {}, rows.map(x => el("tr", {},
+        el("td", { "data-l": "Дата" }, short(x.day)),
+        el("td", { "data-l": "Канал" }, x.ch === "calls" ? "Звонок" : "Переписка"),
+        el("td", { "data-l": "Клиент", class: "who" }, externalPhoneLink(x.ch, x.phone) || x.name || "без номера",
+          x.phone && x.name ? el("span", { class: "nm" }, x.name) : null),
+        el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => x.tags.has(t))
+          .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
+        el("td", { "data-l": "Комментарий", class: "cmt" }, x.notes.length ? x.notes.map(noteNode) : "—")))))));
+  }
+  card.append(body);
+  return card;
 }
 
 function viewAdmins(root) {
@@ -1365,6 +1392,7 @@ function viewAdmins(root) {
   if (sel) {
     root.append(el("div", { class: "subgroup", id: "admin-trend" }, `${personName(sel.who)} · динамика`));
     root.append(adminTrend(sel));
+    root.append(adminIssuesCard(sel));
   }
   root.append(el("div", { class: "note-box" },
     "Звонки и переписки считаются по студии за день, поэтому день приписывается администратору, который стоит в графике " +
