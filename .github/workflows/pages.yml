@@ -16,6 +16,15 @@ name: Публикация страницы
 # резолвится в index.php, а не index.html (index.html отдаёт 404), поэтому
 # перед выгрузкой копируем index.html в index.php — страница статическая,
 # расширение .php ей не мешает, сервер просто отдаёт файл как есть.
+#
+# На этом хостинге app.js/style.css залипают в прокси-кеше и не обновляются
+# даже после настоящих изменений файла (проверено — ETag не меняется между
+# выгрузками). data.enc.json так не делает, его не трогаем. Лечим только
+# app.js/style.css: при каждой выгрузке переименовываем их по хешу содержимого
+# (не коммита — чтобы имя менялось только когда меняется сам файл) и
+# переписываем ссылки в index.php — такого имени в кеше ещё не было, значит
+# и подменить нечего. Старые хешированные файлы на сервере удаляем, чтобы не
+# копились.
 
 on:
   push:
@@ -76,6 +85,28 @@ jobs:
       - name: Выгрузить на face-room.ru/cs/ (FTP)
         run: |
           cd site
+
+          # Переименовываем app.js/style.css по хешу содержимого — см. комментарий
+          # в начале файла про залипающий прокси-кеш. Хеш содержимого (не коммита),
+          # чтобы файл менял имя только когда меняется он сам, а не любой коммит.
+          HASH_JS=$(sha256sum app.js | cut -c1-10)
+          HASH_CSS=$(sha256sum style.css | cut -c1-10)
+          mv app.js "app.$HASH_JS.js"
+          mv style.css "style.$HASH_CSS.css"
+          sed -i "s/app\.js/app.$HASH_JS.js/; s/style\.css/style.$HASH_CSS.css/" index.php
+          echo "app.js → app.$HASH_JS.js, style.css → style.$HASH_CSS.css"
+
+          echo "---- удаляем на сервере старые app.*.js/style.*.css (кроме текущих) ----"
+          OLD_ASSETS=$(curl --silent --show-error --ftp-pasv --disable-epsv -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" \
+            --list-only "ftp://ftp.fac2790745.nichost.ru/" | grep -E '^(app|style)\.[0-9a-f]+\.(js|css)$' || true)
+          for old in $OLD_ASSETS; do
+            if [ "$old" != "app.$HASH_JS.js" ] && [ "$old" != "style.$HASH_CSS.css" ]; then
+              echo "✗ удаляю старый $old"
+              curl --silent --show-error --ftp-pasv --disable-epsv -u "fac2790745_cs:${{ secrets.FTP_PASSWORD }}" \
+                -Q "DELE $old" "ftp://ftp.fac2790745.nichost.ru/"
+            fi
+          done
+
           for f in *; do
             echo "→ $f"
             curl --silent --show-error --ftp-pasv --disable-epsv --connect-timeout 20 --retry 3 \
