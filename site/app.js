@@ -532,6 +532,7 @@ function cellCSV(td) {
 // сам показывает объединённые ячейки. Для таблиц без span ничего не меняет.
 function tableToCSV(container) {
   const tableEl = container.matches("table") ? container : container.querySelector("table");
+  if (!tableEl) return "﻿"; // пустой результат фильтра — таблицы нет, скачиваем пустой файл, а не падаем
   const grid = [];
   [...tableEl.querySelectorAll("tr")].forEach((tr, r) => {
     grid[r] = grid[r] || [];
@@ -1362,23 +1363,57 @@ function adminTrend(r) {
                { name: "⚠ Не перезвонили", color: "--bad", values: share("noCallback", "cMissed"), detail: detail("noCallback", "cMissed") }] })));
 }
 
+const ADMIN_ISSUE_CH = [["calls", "Звонок"], ["messages", "Переписка"]];
+// Общий список тегов обоих каналов (у звонков и переписок частично разные —
+// см. TAG_FILTERS) — чипы ниже показывают только те, что реально встретились.
+const ADMIN_ISSUE_TAGS = [["primary", "Первичный"], ["unbooked", "Не записался"], ["unanswered", "Не ответили"],
+                          ["nocallback", "Не перезвонили"], ["issue", "Замечание"]];
+const hasTag = (row, t) => (t === "issue" ? row.tags.has("issue") || row.tags.has("critical") : row.tags.has(t));
+
 // Конкретные случаи (не агрегаты): те же данные, что в общей «Кто требует
 // внимания», но отфильтрованные на смены этого администратора — r.days и
-// r.studio пришли из adminRows() для текущего периода сверху.
+// r.studio пришли из adminRows() для текущего периода сверху. Чипы канала и
+// тегов — мультивыбор, и работают вместе как «И»: «Звонок» + «Не записался» +
+// «Первичный» одновременно сузят список до строк со всеми тремя признаками.
 function adminIssuesCard(r) {
   const rowsOf = ch => peopleRows(ch, r.days).rows.filter(x => x.studio === r.studio).map(x => ({ ...x, ch }));
   const rows = [...rowsOf("calls"), ...rowsOf("messages")].sort((a, b) => b.day.localeCompare(a.day));
+  const selCh = new Set(), selTags = new Set();
+  const matches = x => (!selCh.size || selCh.has(x.ch)) && [...selTags].every(t => hasTag(x, t));
+
+  const chChips = el("div", { class: "chips", role: "group", "aria-label": "Канал" });
+  const tagChips = el("div", { class: "chips", role: "group", "aria-label": "Тип" });
   const body = el("div", {});
   const card = el("div", { class: "card people" });
   card.append(el("div", { class: "card-head" }, el("h2", {}, "Ошибки и пропуски"),
-      rows.length ? dlButton("ошибки-администратора.csv", () => body) : null),
-    el("p", { class: "cap" }, `${personName(r.who)} · ${r.studio} · его смены за ${periodCaption(r.days)}`));
-  if (!rows.length) {
-    body.append(el("div", { class: "empty-box" }, "За эти смены ошибок и пропусков не найдено"));
-  } else {
+      dlButton("ошибки-администратора.csv", () => body)),
+    el("p", { class: "cap" }, `${personName(r.who)} · ${r.studio} · его смены за ${periodCaption(r.days)}`),
+    el("div", { class: "tools" }, chChips, tagChips), body);
+
+  const draw = () => {
+    chChips.textContent = "";
+    ADMIN_ISSUE_CH.forEach(([id, lab]) => {
+      const n = rows.filter(x => x.ch === id).length;
+      if (!n) return;
+      chChips.append(el("button", { type: "button", "aria-pressed": String(selCh.has(id)),
+        onclick: () => { selCh.has(id) ? selCh.delete(id) : selCh.add(id); draw(); } }, lab, el("span", { class: "n" }, String(n))));
+    });
+    tagChips.textContent = "";
+    ADMIN_ISSUE_TAGS.forEach(([id, lab]) => {
+      const n = rows.filter(x => hasTag(x, id)).length;
+      if (!n) return;
+      tagChips.append(el("button", { type: "button", "aria-pressed": String(selTags.has(id)),
+        onclick: () => { selTags.has(id) ? selTags.delete(id) : selTags.add(id); draw(); } }, lab, el("span", { class: "n" }, String(n))));
+    });
+    const shown = rows.filter(matches);
+    body.textContent = "";
+    if (!shown.length) {
+      body.append(el("div", { class: "empty-box" }, rows.length ? "Ничего не нашлось" : "За эти смены ошибок и пропусков не найдено"));
+      return;
+    }
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
       el("thead", {}, el("tr", {}, ["Дата", "Канал", "Клиент", "Теги", "Комментарий"].map(h => el("th", {}, h)))),
-      el("tbody", {}, rows.map(x => el("tr", {},
+      el("tbody", {}, shown.map(x => el("tr", {},
         el("td", { "data-l": "Дата" }, short(x.day)),
         el("td", { "data-l": "Канал" }, x.ch === "calls" ? "Звонок" : "Переписка"),
         el("td", { "data-l": "Клиент", class: "who" }, externalPhoneLink(x.ch, x.phone) || x.name || "без номера",
@@ -1386,8 +1421,8 @@ function adminIssuesCard(r) {
         el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => x.tags.has(t))
           .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
         el("td", { "data-l": "Комментарий", class: "cmt" }, x.notes.length ? x.notes.map(noteNode) : "—")))))));
-  }
-  card.append(body);
+  };
+  draw();
   return card;
 }
 
