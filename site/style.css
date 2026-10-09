@@ -200,6 +200,10 @@ tbody tr:last-child td { border-bottom: 0; }
 tr.click { cursor: pointer; }
 tr.click:hover td { background: var(--card-2); }
 td .pct { color: var(--muted); font-size: 12px; margin-left: 4px; }
+/* Администраторы: показатель заметно хуже среднего по сети — см. WARN_PP/
+   WARN_RESP_MIN в app.js. .pct.flag-bad переопределяет приглушённый цвет
+   обычного процента, второй селектор — для «Ответ», где span не .pct. */
+td .pct.flag-bad, td span.flag-bad { color: var(--bad-ink); font-weight: 700; }
 tr.total td { font-weight: 700; }
 
 /* ── Списки людей ─────────────────────────────────────────────────────── */

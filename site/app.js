@@ -482,8 +482,11 @@ function drawChart(box, o) {
 }
 
 // ── Таблицы ────────────────────────────────────────────────────────────────
-function frac(a, b) {
-  return b ? [`${a}/${b}`, el("span", { class: "pct" }, fmtPct(pct(a, b)))] : "—";
+// warn — показатель заметно хуже контрольного значения (сейчас только у
+// администраторов, сравнение со средним по сети); остальным вызовам frac()
+// он не нужен и по умолчанию выключен.
+function frac(a, b, warn) {
+  return b ? [`${a}/${b}`, el("span", { class: `pct${warn ? " flag-bad" : ""}` }, `${warn ? "⚠ " : ""}${fmtPct(pct(a, b))}`)] : "—";
 }
 function table(head, rows) {
   return el("div", { class: "tbl-wrap" }, el("table", {},
@@ -1259,18 +1262,53 @@ function studioAcc(days, studio) {
   return a;
 }
 
-function adminCells(a) {
+// Порог подсветки «хуже сети»: просадка показателя относительно среднего по
+// ВСЕЙ сети — даже если сверху выбрана одна студия (studioNames() тут не
+// годится, он уважает фильтр; обходим его явным DATA.studios).
+const WARN_PP = 3;       // процентных пунктов — для долей (конверсия, замечания, …)
+const WARN_RESP_MIN = 5; // минут сверх сетевого среднего — для времени ответа
+function networkBaseline(days) {
+  const a = adminAcc();
+  for (const day of days) for (const s of DATA.studios) addStudioDay(a, day, s);
+  return {
+    conv: pct(a.cBooked + a.mBooked, a.cClients + a.mClients),
+    callsBooked: pct(a.cBooked, a.cClients),
+    callIssues: a.cAnalyzed ? pct(a.cIssues, a.cCalls) : null,
+    noCallback: a.cMissed ? pct(a.noCallback, a.cMissed) : null,
+    msgBooked: pct(a.mBooked, a.mClients),
+    unanswered: a.dialogs ? pct(a.unanswered, a.dialogs) : null,
+    msgIssues: a.dialogs ? pct(a.msgIssues, a.dialogs) : null,
+    resp: respMinutes(a.resp),
+  };
+}
+
+// net — сетевой бейзлайн (networkBaseline), всегда по всей сети, независимо
+// от фильтра студии сверху. lowBad/highBad — просадка относительно него на
+// WARN_PP п.п. и больше: lowBad для долей, где больше — лучше (конверсия),
+// highBad — где меньше — лучше (замечания, не перезвонили, без ответа).
+function adminCells(a, net) {
   const resp = respMinutes(a.resp);
+  const conv = pct(a.cBooked + a.mBooked, a.cClients + a.mClients);
+  const callsBooked = pct(a.cBooked, a.cClients);
+  const callIssues = a.cAnalyzed ? pct(a.cIssues, a.cCalls) : null;
+  const noCallback = a.cMissed ? pct(a.noCallback, a.cMissed) : null;
+  const msgBooked = pct(a.mBooked, a.mClients);
+  const unanswered = a.dialogs ? pct(a.unanswered, a.dialogs) : null;
+  const msgIssues = a.dialogs ? pct(a.msgIssues, a.dialogs) : null;
+  const lowBad = (v, base) => v !== null && base !== null && base - v >= WARN_PP;
+  const highBad = (v, base) => v !== null && base !== null && v - base >= WARN_PP;
+  const respBad = resp !== null && net.resp !== null && resp - net.resp >= WARN_RESP_MIN;
   return [
     el("td", { "data-l": "Смен" }, String(a.shifts), a.shared ? el("span", { class: "pct" }, `вдвоём ${a.shared}`) : null),
-    el("td", { "data-l": "Общая конверсия" }, frac(a.cBooked + a.mBooked, a.cClients + a.mClients)),
-    el("td", { "data-l": "Звонки · записались", class: "grp" }, frac(a.cBooked, a.cClients)),
-    el("td", { "data-l": "Замечания по звонкам" }, a.cAnalyzed ? frac(a.cIssues, a.cCalls) : "—"),
-    el("td", { "data-l": "Не перезвонили" }, a.cMissed ? frac(a.noCallback, a.cMissed) : "—"),
-    el("td", { "data-l": "Переписки · записались", class: "grp" }, frac(a.mBooked, a.mClients)),
-    el("td", { "data-l": "Без ответа" }, a.dialogs ? frac(a.unanswered, a.dialogs) : "—"),
-    el("td", { "data-l": "С замечаниями" }, a.dialogs ? frac(a.msgIssues, a.dialogs) : "—"),
-    el("td", { "data-l": "Ответ" }, resp === null ? "—" : `${ruNum(resp)} мин`),
+    el("td", { "data-l": "Общая конверсия" }, frac(a.cBooked + a.mBooked, a.cClients + a.mClients, lowBad(conv, net.conv))),
+    el("td", { "data-l": "Звонки · записались", class: "grp" }, frac(a.cBooked, a.cClients, lowBad(callsBooked, net.callsBooked))),
+    el("td", { "data-l": "Замечания по звонкам" }, a.cAnalyzed ? frac(a.cIssues, a.cCalls, highBad(callIssues, net.callIssues)) : "—"),
+    el("td", { "data-l": "Не перезвонили" }, a.cMissed ? frac(a.noCallback, a.cMissed, highBad(noCallback, net.noCallback)) : "—"),
+    el("td", { "data-l": "Переписки · записались", class: "grp" }, frac(a.mBooked, a.mClients, lowBad(msgBooked, net.msgBooked))),
+    el("td", { "data-l": "Без ответа" }, a.dialogs ? frac(a.unanswered, a.dialogs, highBad(unanswered, net.unanswered)) : "—"),
+    el("td", { "data-l": "С замечаниями" }, a.dialogs ? frac(a.msgIssues, a.dialogs, highBad(msgIssues, net.msgIssues)) : "—"),
+    el("td", { "data-l": "Ответ" }, resp === null ? "—"
+      : respBad ? el("span", { class: "flag-bad" }, `⚠ ${ruNum(resp)} мин`) : `${ruNum(resp)} мин`),
   ];
 }
 // Два ряда заголовков: «Звонки»/«Переписки» группируют свои колонки одной
@@ -1372,13 +1410,14 @@ function viewAdmins(root) {
   } else {
     const total = studioAcc(days.filter(inShiftRange), state.studio);
     total.shifts = sum(rows.map(r => r.acc.shifts));
+    const net = networkBaseline(days.filter(inShiftRange));
     const tr = rows.map(r => el("tr", { class: `click${state.admin === r.key ? " sel" : ""}`,
         onclick: () => { state.admin = state.admin === r.key ? "" : r.key; renderContent();
                          if (state.admin) $("#admin-trend")?.scrollIntoView({ behavior: "smooth", block: "start" }); } },
       el("td", { "data-l": "Администратор", class: "who" }, personName(r.who), el("span", { class: "nm" }, r.studio)),
-      adminCells(r.acc)));
+      adminCells(r.acc, net)));
     tr.push(el("tr", { class: "total" }, el("td", { "data-l": "", class: "who" }, state.studio || "Вся сеть",
-      el("span", { class: "nm" }, "все дни, для сравнения")), adminCells(total)));
+      el("span", { class: "nm" }, "все дни, для сравнения")), adminCells(total, net)));
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl adm" }, adminHead(), el("tbody", {}, tr))));
   }
   root.append(card);
@@ -1399,8 +1438,10 @@ function viewAdmins(root) {
   root.append(el("div", { class: "note-box" },
     "Звонки и переписки считаются по студии за день, поэтому день приписывается администратору, который стоит в графике " +
     "работы YClients (Филиал → Настройки → График работы). Если в графике двое — день засчитан обоим («вдвоём»). " +
-    "Замечания по звонкам — разговоры, где модель нашла ошибки администратора; за смену — в среднем на день с разбором звонков. " +
-    "Строка «Вся сеть» или студии — все дни периода, для сравнения."));
+    "Замечания по звонкам — разговоры, где модель нашла ошибки администратора, в процентах от звонков за дни с разбором. " +
+    "Строка «Вся сеть» или студии — все дни периода, для сравнения. " +
+    `⚠ — показатель заметно хуже среднего по всей сети (${WARN_PP} п.п. и больше для долей, ${WARN_RESP_MIN} мин и больше ` +
+    "для времени ответа) — сравнение всегда со всей сетью, даже если выше выбрана одна студия."));
 }
 
 // ── Каркас ─────────────────────────────────────────────────────────────────
