@@ -10,7 +10,7 @@
 
 let DATA = null;
 const state = { tab: "calls", studio: "", period: "cur_week", query: "",
-                tagFilter: { calls: "all", messages: "all" }, listFilter: {}, reviewsKind: "public", admin: "" };
+                tagFilter: { calls: new Set(), messages: new Set() }, listFilter: {}, reviewsKind: "public", admin: "" };
 
 // ── Мелочи ─────────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -697,10 +697,13 @@ const TAGS = {
   issue:      { label: "замечание", cls: "t-issue" },
 };
 const TAG_FILTERS = {
-  calls: [["all", "Все"], ["unbooked", "Не записались"], ["nocallback", "Не перезвонили"], ["issue", "Замечания"], ["primary", "Первичные"]],
-  messages: [["all", "Все"], ["unbooked", "Не записались"], ["unanswered", "Не ответили"], ["issue", "Замечания"], ["primary", "Первичные"]],
+  calls: [["unbooked", "Не записались"], ["nocallback", "Не перезвонили"], ["issue", "Замечания"], ["primary", "Первичные"]],
+  messages: [["unbooked", "Не записались"], ["unanswered", "Не ответили"], ["issue", "Замечания"], ["primary", "Первичные"]],
 };
-const tagMatches = (row, f) => f === "all" || row.tags.has(f) || (f === "issue" && row.tags.has("critical"));
+// Мультивыбор чипов: ничего не выбрано — показываем всё (отдельной кнопки
+// «Все» не нужно), несколько выбранных работают как «И» — сужают список до
+// строк со всеми выбранными тегами сразу, а не любой из них.
+const hasTag = (row, t) => (t === "issue" ? row.tags.has("issue") || row.tags.has("critical") : row.tags.has(t));
 
 function peopleRows(ch, days) {
   const out = [];
@@ -787,7 +790,7 @@ const PAGE = 50;
 function peopleCard(ch, days) {
   const { rows, trimmed, untracked, firstMsgList, primaryUntracked, firstPrimary } = peopleRows(ch, days);
   const filters = TAG_FILTERS[ch];
-  if (!filters.some(([id]) => id === state.tagFilter[ch])) state.tagFilter[ch] = "all";
+  const sel = state.tagFilter[ch];
   const card = el("div", { class: "card people" });
   const title = "Кто требует внимания";
   card.append(el("div", { class: "card-head" }, el("h2", {}, title),
@@ -798,7 +801,7 @@ function peopleCard(ch, days) {
   const search = el("input", { class: "search", type: "search", placeholder: "Телефон, имя, текст",
                                value: state.query, "aria-label": "Поиск по таблице" });
   const body = el("div", {});
-  card.append(el("div", { class: "tools" }, filters.length > 1 ? chips : null, search), body);
+  card.append(el("div", { class: "tools" }, chips, search), body);
 
   const draw = (limit = PAGE) => {
     const q = state.query.trim().toLowerCase();
@@ -807,11 +810,11 @@ function peopleCard(ch, days) {
     const searched = q ? rows.filter(r => hay(r).includes(q)) : rows;
     chips.textContent = "";
     filters.forEach(([id, lab]) => {
-      const n = searched.filter(r => tagMatches(r, id)).length;
-      chips.append(el("button", { type: "button", "aria-pressed": String(id === state.tagFilter[ch]),
-        onclick: () => { state.tagFilter[ch] = id; draw(); } }, lab, el("span", { class: "n" }, String(n))));
+      const n = searched.filter(r => hasTag(r, id)).length;
+      chips.append(el("button", { type: "button", "aria-pressed": String(sel.has(id)),
+        onclick: () => { sel.has(id) ? sel.delete(id) : sel.add(id); draw(); } }, lab, el("span", { class: "n" }, String(n))));
     });
-    const shown = searched.filter(r => tagMatches(r, state.tagFilter[ch]));
+    const shown = searched.filter(r => [...sel].every(t => hasTag(r, t)));
     body.textContent = "";
     if (!shown.length) {
       body.append(el("div", { class: "empty-box" }, rows.length ? "Ничего не нашлось" : "За этот период никого нет"));
@@ -1368,7 +1371,6 @@ const ADMIN_ISSUE_CH = [["calls", "Звонок"], ["messages", "Перепис�
 // см. TAG_FILTERS) — чипы ниже показывают только те, что реально встретились.
 const ADMIN_ISSUE_TAGS = [["primary", "Первичный"], ["unbooked", "Не записался"], ["unanswered", "Не ответили"],
                           ["nocallback", "Не перезвонили"], ["issue", "Замечание"]];
-const hasTag = (row, t) => (t === "issue" ? row.tags.has("issue") || row.tags.has("critical") : row.tags.has(t));
 
 // Конкретные случаи (не агрегаты): те же данные, что в общей «Кто требует
 // внимания», но отфильтрованные на смены этого администратора — r.days и
