@@ -25,6 +25,7 @@
   --bad: #d03b3b;               /* статус: пропущено, 1–3★ */
   --good-ink: #006300;
   --bad-ink: #b42e2e;
+  --warn-ink: #b5640a;          /* администраторы: хуже среднего по сети — мягче красного, не «ошибка» */
   --shadow: 0 10px 34px rgba(20, 30, 50, .06);
   --logo-filter: none;
 }
@@ -35,7 +36,7 @@
     --muted: #8d8f98; --line: #2a2d34; --axis: #3b3e46; --grid: #25282e;
     --accent: #5fb3cb; --accent-ink: #8fd0e2; --accent-soft: #16323b;
     --calls: #3987e5; --messages: #d95926; --primary: #199e70; --issue: #9085e9; --neutral: #4a4d55; --bad: #d03b3b;
-    --good-ink: #0ca30c; --bad-ink: #ef6b6b; --shadow: 0 10px 34px rgba(0, 0, 0, .35);
+    --good-ink: #0ca30c; --bad-ink: #ef6b6b; --warn-ink: #f0a84e; --shadow: 0 10px 34px rgba(0, 0, 0, .35);
     --logo-filter: invert(1) brightness(1.6);
   }
 }
@@ -45,7 +46,7 @@
   --muted: #8d8f98; --line: #2a2d34; --axis: #3b3e46; --grid: #25282e;
   --accent: #5fb3cb; --accent-ink: #8fd0e2; --accent-soft: #16323b;
   --calls: #3987e5; --messages: #d95926; --primary: #199e70; --issue: #9085e9; --neutral: #4a4d55; --bad: #d03b3b;
-  --good-ink: #0ca30c; --bad-ink: #ef6b6b; --shadow: 0 10px 34px rgba(0, 0, 0, .35);
+  --good-ink: #0ca30c; --bad-ink: #ef6b6b; --warn-ink: #f0a84e; --shadow: 0 10px 34px rgba(0, 0, 0, .35);
   --logo-filter: invert(1) brightness(1.6);
 }
 
@@ -203,7 +204,7 @@ td .pct { color: var(--muted); font-size: 12px; margin-left: 4px; }
 /* Администраторы: показатель заметно хуже среднего по сети — см. WARN_PP/
    WARN_RESP_MIN в app.js. .pct.flag-bad переопределяет приглушённый цвет
    обычного процента, второй селектор — для «Ответ», где span не .pct. */
-td .pct.flag-bad, td span.flag-bad { color: var(--bad-ink); font-weight: 700; }
+td .pct.flag-bad, td span.flag-bad { color: var(--warn-ink); font-weight: 700; }
 tr.total td { font-weight: 700; }
 
 /* ── Списки людей ─────────────────────────────────────────────────────── */
