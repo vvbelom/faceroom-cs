@@ -1263,6 +1263,7 @@ function adminCells(a) {
   const resp = respMinutes(a.resp);
   return [
     el("td", { "data-l": "Смен" }, String(a.shifts), a.shared ? el("span", { class: "pct" }, `вдвоём ${a.shared}`) : null),
+    el("td", { "data-l": "Общая конверсия" }, frac(a.cBooked + a.mBooked, a.cClients + a.mClients)),
     el("td", { "data-l": "Звонки · записались", class: "grp" }, frac(a.cBooked, a.cClients)),
     el("td", { "data-l": "Замечания по звонкам" }, a.cAnalyzed ? frac(a.cIssues, a.cCalls) : "—"),
     el("td", { "data-l": "Не перезвонили" }, a.cMissed ? frac(a.noCallback, a.cMissed) : "—"),
@@ -1278,10 +1279,11 @@ function adminHead() {
   return el("thead", {},
     el("tr", {},
       el("th", { rowspan: "2" }, "Администратор"), el("th", { rowspan: "2" }, "Смен"),
+      el("th", { rowspan: "2" }, "Общая конверсия"),
       el("th", { colspan: "3", class: "grp" }, "Звонки"), el("th", { colspan: "4", class: "grp" }, "Переписки")),
     el("tr", {},
       el("th", { class: "grp" }, "Записи"), el("th", {}, "Замечания"), el("th", {}, "Не перезвонили"),
-      el("th", { class: "grp" }, "Записи"), el("th", {}, "Без ответа"), el("th", {}, "С замечаниями"), el("th", {}, "Ответ")));
+      el("th", { class: "grp" }, "Записи"), el("th", {}, "Без ответа"), el("th", {}, "Замечания"), el("th", {}, "Ответ")));
 }
 
 // Личная динамика: последние 12 недель по сменам этого человека в этой
