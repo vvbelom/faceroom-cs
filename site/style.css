@@ -85,7 +85,9 @@ img.logo { height: 28px; width: auto; display: block; filter: var(--logo-filter)
 /* ── Шапка, разделы, фильтры ──────────────────────────────────────────── */
 .top { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .top .title { font-weight: 700; font-size: 15px; }
-.top .meta { margin-left: auto; text-align: right; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: pre-line; }
+.top-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.top .meta { text-align: right; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: pre-line; }
+.bug-btn { font-size: 15px; line-height: 1; padding: 5px 9px; }
 .foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 26px; }
 @media (max-width: 560px) { .top .title { display: none; } }
 .icon-btn {
@@ -260,6 +262,56 @@ table.ppl td.cmt { white-space: normal; min-width: 200px; color: var(--ink-2); }
 table.ppl .cm + .cm { margin-top: 6px; }
 table.ppl .cm .time { color: var(--muted); font-weight: 600; margin-right: 4px; }
 table.ppl ul { margin: 3px 0 0; padding-left: 18px; }
+
+/* «⋮ → Не ошибка»: компактная кнопка у каждого замечания + сворачиваемая
+   мини-форма (имя + обязательный комментарий). Не часть основного сценария —
+   нарочно маленькая и неброская, не таблица и не отдельная вкладка. */
+.note-flag-wrap { display: inline-block; margin-left: 4px; }
+.note-flag {
+  border: 1px solid var(--line); background: var(--card-2); color: var(--muted); border-radius: 6px;
+  width: 20px; height: 18px; line-height: 1; font-size: 12px; cursor: pointer; padding: 0; vertical-align: -3px;
+}
+.note-flag:hover { border-color: var(--axis); color: var(--ink-2); }
+.note-form {
+  display: block; margin-top: 6px; padding: 8px; background: var(--card-2); border-radius: 10px;
+  max-width: 320px;
+}
+.note-form input, .note-form textarea {
+  display: block; width: 100%; font-family: inherit; font-size: 13px; padding: 6px 9px; margin-bottom: 6px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); outline: none;
+  box-sizing: border-box;
+}
+.note-form input:focus, .note-form textarea:focus { border-color: var(--accent); }
+.note-form textarea { resize: vertical; min-height: 46px; }
+.note-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.note-form-actions button {
+  border: 0; border-radius: 8px; padding: 5px 11px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.note-cancel { background: none; color: var(--muted); }
+.note-cancel:hover { color: var(--ink-2); }
+.note-submit { background: var(--ink); color: var(--card); }
+.note-submit:disabled { opacity: .6; cursor: progress; }
+.note-err { color: var(--bad-ink); font-size: 12px; margin: -2px 0 6px; }
+.note-sent { color: var(--good-ink); font-size: 12px; margin-left: 4px; cursor: help; }
+
+/* ── «Доработки»: модалка со списком отметок «не ошибка» ─────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(20, 20, 20, .45); display: flex; align-items: flex-start;
+  justify-content: center; padding: 8vh 16px; z-index: 20; overflow-y: auto;
+}
+.modal {
+  background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 18px 18px 14px;
+  width: 100%; max-width: 560px;
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 2px; }
+.modal-head h2 { margin: 0; font-size: 16px; }
+.modal-body { max-height: 70vh; overflow-y: auto; margin-top: 10px; }
+.doworks-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.doworks-item:last-child { border-bottom: 0; }
+.doworks-meta { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
+.doworks-orig { font-size: 13px; color: var(--ink-2); margin-top: 4px; }
+.doworks-comment { font-size: 13px; margin-top: 4px; }
+.doworks-who { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .tag {
   display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
   margin: 0 4px 4px 0; white-space: nowrap;

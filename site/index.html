@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <!-- Страница расшифровывает телефоны клиентов: чужие скрипты и отправка данных
      куда-либо, кроме самого сайта, запрещены. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://functions.yandexcloud.net; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>FaceRoom · Качество сервиса</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,7 +30,10 @@
     <header class="top">
       <img class="logo" src="logo.png" alt="FaceRoom">
       <span class="title">Качество сервиса</span>
-      <div class="meta" id="updated"></div>
+      <div class="top-right">
+        <div class="meta" id="updated"></div>
+        <button class="icon-btn bug-btn" id="doworks-btn" type="button" aria-label="Доработки" hidden>🐛</button>
+      </div>
     </header>
     <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы"></nav>
     <div class="filters" id="filters"></div>

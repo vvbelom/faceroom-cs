@@ -62,6 +62,9 @@ function plural(n, one, few, many) {
 // сеть (поправьте MEGAFON_BASE/YCLIENTS_GROUP, если для каких-то студий он другой).
 const MEGAFON_BASE = "https://vats758751.megapbx.ru/#/history";
 const YCLIENTS_GROUP = "187230";
+// «⋮ → Не ошибка»: пишет в doworks_write (Yandex Cloud Function, репозиторий
+// wahelp-daily-bot/cs_dashboard/) — статья с инструкцией по деплою там же.
+const DOWORKS_URL = "https://functions.yandexcloud.net/d4ea62enn93ncfu2t2rl";
 function externalPhoneLink(ch, raw) {
   const d = String(raw || "").replace(/\D/g, "");
   if (!d) return null;
@@ -514,6 +517,10 @@ function textParts(node) {
   }
   if (node.nodeType !== 1) return [];
   if (node.classList.contains("stars")) { const t = node.getAttribute("title"); return t ? [t] : []; }
+  // Кнопка «⋮ → Не ошибка» и её форма — служебный UI, не часть самого
+  // замечания: без этого в CSV к тексту комментария приклеивались бы
+  // «⋮Отправить Отмена» (и «✓ отправлено…» после отправки).
+  if (node.classList.contains("note-flag-wrap")) return [];
   return [...node.childNodes].flatMap(textParts);
 }
 function cellCSV(td) {
@@ -773,17 +780,91 @@ function peopleRows(ch, days) {
   return { rows: out, trimmed, untracked, firstMsgList, primaryUntracked, firstPrimary };
 }
 
-function noteNode(n) {
-  if (typeof n === "string") return el("div", { class: "cm" }, n);
-  if (n.kind === "unanswered") return el("div", { class: "cm" },
-    n.time ? el("span", { class: "time" }, n.time) : null, `«${n.text || ""}» — без ответа`);
-  if (n.kind === "msg-issue") return el("div", { class: "cm" },
-    n.time ? el("span", { class: "time" }, n.time) : null, n.text || "");
-  // замечание по звонку: время, направление, итог разговора и сами замечания
-  return el("div", { class: "cm" },
-    el("span", { class: "time" }, `${n.time || ""} ${n.direction === "in" ? "↙ входящий" : "↗ исходящий"}`),
-    n.summary ? ` ${n.summary}` : "",
-    (n.issues || []).length ? el("ul", {}, n.issues.map(x => el("li", {}, x))) : null);
+// ── «⋮ → Не ошибка»: отметка конкретного замечания, см. DOWORKS_URL ─────────
+// Пишет в doworks_write, оттуда на следующей сборке отчёта попадает в
+// DATA.doworks (раздел «Доработки», кнопка-жук в шапке). На статистику пока
+// не влияет. Локально (только в этом браузере) запоминаем отправленные —
+// после перезагрузки страницы такие замечания сразу показывают «отправлено»,
+// не дожидаясь пересборки, которая обновит это для всех.
+function noteSummary(n) {
+  if (typeof n === "string") return n;
+  if (n.kind === "unanswered") return `${n.time ? n.time + " " : ""}«${n.text || ""}» — без ответа`;
+  if (n.kind === "msg-issue") return `${n.time ? n.time + " " : ""}${n.text || ""}`;
+  const dir = n.direction === "in" ? "↙ входящий" : "↗ исходящий";
+  const issues = (n.issues || []).join("; ");
+  return `${n.time || ""} ${dir}${n.summary ? ` ${n.summary}` : ""}${issues ? ` — ${issues}` : ""}`.trim();
+}
+function doworksSentMap() {
+  try { return JSON.parse(localStorage.getItem("fr-cs-doworks-sent") || "{}"); } catch (e) { return {}; }
+}
+function doworksMarkSent(key, info) {
+  const m = doworksSentMap();
+  m[key] = info;
+  try { localStorage.setItem("fr-cs-doworks-sent", JSON.stringify(m)); } catch (e) { /* приватный режим */ }
+}
+function lastManagerName() {
+  try { return localStorage.getItem("fr-cs-manager-name") || ""; } catch (e) { return ""; }
+}
+// ctx: {channel, day, studio, phone, name} — строка-источник замечания.
+function noteFlagKey(n, ctx) {
+  return `${ctx.channel}|${ctx.day}|${ctx.studio}|${ctx.phone || ctx.name}|${noteSummary(n)}`.slice(0, 300);
+}
+function noteFlagBlock(n, ctx) {
+  const key = noteFlagKey(n, ctx);
+  const wrap = el("span", { class: "note-flag-wrap" });
+  const showSent = info => {
+    wrap.textContent = "";
+    wrap.append(el("span", { class: "note-sent", title: info.comment }, "✓ отправлено как «не ошибка»"));
+  };
+  const already = doworksSentMap()[key];
+  if (already) { showSent(already); return wrap; }
+
+  const nameInput = el("input", { type: "text", placeholder: "Ваше имя", value: lastManagerName() });
+  const commentInput = el("textarea", { placeholder: "Комментарий — почему это не ошибка" });
+  const err = el("div", { class: "note-err" });
+  const submitBtn = el("button", { class: "note-submit", type: "button" }, "Отправить");
+  const cancelBtn = el("button", { class: "note-cancel", type: "button" }, "Отмена");
+  const form = el("div", { class: "note-form", hidden: true },
+    nameInput, commentInput, err, el("div", { class: "note-form-actions" }, cancelBtn, submitBtn));
+  const btn = el("button", { class: "note-flag", type: "button", title: "Отметить как не ошибку",
+                             "aria-label": "Отметить как не ошибку" }, "⋮");
+  btn.onclick = () => { form.hidden = !form.hidden; if (!form.hidden) nameInput.focus(); };
+  cancelBtn.onclick = () => { form.hidden = true; err.textContent = ""; };
+  submitBtn.onclick = async () => {
+    const manager = nameInput.value.trim(), comment = commentInput.value.trim();
+    if (!manager) { err.textContent = "Укажите имя"; return; }
+    if (!comment) { err.textContent = "Комментарий обязателен"; return; }
+    err.textContent = ""; submitBtn.disabled = true; submitBtn.textContent = "Отправляю…";
+    let password = "";
+    try { password = sessionStorage.getItem("fr-cs") || ""; } catch (e) { /* ничего */ }
+    try {
+      const resp = await fetch(DOWORKS_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, manager, comment, source: { channel: ctx.channel, day: ctx.day,
+          studio: ctx.studio, phone: ctx.phone || "", name: ctx.name || "", note: noteSummary(n) } }) });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.status !== "ok") throw new Error(data.message || `Ошибка ${resp.status}`);
+      try { localStorage.setItem("fr-cs-manager-name", manager); } catch (e) { /* приватный режим */ }
+      const info = { manager, comment, sentAt: new Date().toISOString(), id: data.id };
+      doworksMarkSent(key, info);
+      showSent(info);
+    } catch (e) {
+      err.textContent = e.message || "Не получилось отправить, попробуйте ещё раз";
+      submitBtn.disabled = false; submitBtn.textContent = "Отправить";
+    }
+  };
+  wrap.append(btn, form);
+  return wrap;
+}
+
+function noteNode(n, ctx) {
+  const body = typeof n === "string" ? [n]
+    : n.kind === "unanswered" ? [n.time ? el("span", { class: "time" }, n.time) : null, `«${n.text || ""}» — без ответа`]
+    : n.kind === "msg-issue" ? [n.time ? el("span", { class: "time" }, n.time) : null, n.text || ""]
+    // замечание по звонку: время, направление, итог разговора и сами замечания
+    : [el("span", { class: "time" }, `${n.time || ""} ${n.direction === "in" ? "↙ входящий" : "↗ исходящий"}`),
+       n.summary ? ` ${n.summary}` : "",
+       (n.issues || []).length ? el("ul", {}, n.issues.map(x => el("li", {}, x))) : null];
+  return el("div", { class: "cm" }, ...body, noteFlagBlock(n, ctx));
 }
 
 const PAGE = 50;
@@ -829,7 +910,9 @@ function peopleCard(ch, days) {
           r.phone && r.name ? el("span", { class: "nm" }, r.name) : null),
         el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => r.tags.has(t))
           .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
-        el("td", { "data-l": "Комментарий", class: "cmt" }, r.notes.length ? r.notes.map(noteNode) : "—")))))));
+        el("td", { "data-l": "Комментарий", class: "cmt" }, r.notes.length
+          ? r.notes.map(n => noteNode(n, { channel: ch, day: r.day, studio: r.studio, phone: r.phone, name: r.name }))
+          : "—")))))));
     if (shown.length > limit) {
       body.append(el("button", { class: "more", type: "button", onclick: () => draw(limit + PAGE) },
         `Показать ещё (${shown.length - limit})`));
@@ -1422,7 +1505,9 @@ function adminIssuesCard(r) {
           x.phone && x.name ? el("span", { class: "nm" }, x.name) : null),
         el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => x.tags.has(t))
           .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
-        el("td", { "data-l": "Комментарий", class: "cmt" }, x.notes.length ? x.notes.map(noteNode) : "—")))))));
+        el("td", { "data-l": "Комментарий", class: "cmt" }, x.notes.length
+          ? x.notes.map(n => noteNode(n, { channel: x.ch, day: x.day, studio: x.studio, phone: x.phone, name: x.name }))
+          : "—")))))));
   };
   draw();
   return card;
@@ -1536,10 +1621,44 @@ function renderContent() {
 
 function render() { renderTabs(); renderFilters(); renderContent(); }
 
+// ── «Доработки»: список отметок «не ошибка» (DATA.doworks, см. noteFlagBlock
+// выше) — не вкладка, а всплывающая панель по кнопке-жуку в шапке: это
+// служебный, не основной сценарий страницы.
+function doworksPanel() {
+  const items = DATA.doworks || [];
+  const close = () => overlay.remove();
+  const onEsc = e => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
+  const list = items.length
+    ? items.map(r => el("div", { class: "doworks-item" },
+        el("div", { class: "doworks-meta" },
+          `${short(r.source.day)} · ${r.source.studio} · ${r.source.channel === "calls" ? "звонок" : "переписка"}`,
+          externalPhoneLink(r.source.channel, r.source.phone) || el("span", {}, r.source.name || "без номера")),
+        r.source.note ? el("div", { class: "doworks-orig" }, `«${r.source.note}»`) : null,
+        el("div", { class: "doworks-comment" }, r.comment),
+        el("div", { class: "doworks-who" }, `${r.manager} · отмечено ${short(r.marked_at)}`)))
+    : [el("div", { class: "empty-box" }, "Пока ничего не отмечено как «не ошибка»")];
+  const overlay = el("div", { class: "modal-overlay", onclick: e => { if (e.target === overlay) close(); } },
+    el("div", { class: "modal" },
+      el("div", { class: "modal-head" }, el("h2", {}, "Доработки"),
+        el("button", { class: "icon-btn", type: "button", "aria-label": "Закрыть", onclick: close }, "✕")),
+      el("p", { class: "cap" }, "Замечания, которые управляющие отметили как «не ошибка», с комментарием."),
+      el("div", { class: "modal-body" }, list)));
+  document.body.append(overlay);
+  document.addEventListener("keydown", onEsc);
+}
+function renderDoworksButton() {
+  const btn = $("#doworks-btn");
+  const n = (DATA.doworks || []).length;
+  btn.hidden = false;
+  btn.title = n ? `Доработки (${n})` : "Доработки";
+  btn.onclick = doworksPanel;
+}
+
 function start() {
   restore();
   const gen = new Date(DATA.generated_at);
   $("#updated").textContent = `Данные по ${longDay(yesterday())}\nобновлено ${gen.toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}`;
+  renderDoworksButton();
   render();
   let t = 0;
   window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => charts.forEach(f => f()), 150); });
