@@ -517,10 +517,9 @@ function textParts(node) {
   }
   if (node.nodeType !== 1) return [];
   if (node.classList.contains("stars")) { const t = node.getAttribute("title"); return t ? [t] : []; }
-  // Кнопка «⋮ → Не ошибка» и её форма — служебный UI, не часть самого
-  // замечания: без этого в CSV к тексту комментария приклеивались бы
-  // «⋮Отправить Отмена» (и «✓ отправлено…» после отправки).
-  if (node.classList.contains("note-flag-wrap")) return [];
+  // Колонка «⋮ → Не ошибка» — служебный UI (кнопка/галочка), не данные
+  // отчёта: без этого в CSV появлялась бы лишняя колонка с «⋮»/«✓».
+  if (node.classList.contains("note-col")) return [];
   return [...node.childNodes].flatMap(textParts);
 }
 function cellCSV(td) {
@@ -780,12 +779,30 @@ function peopleRows(ch, days) {
   return { rows: out, trimmed, untracked, firstMsgList, primaryUntracked, firstPrimary };
 }
 
+function noteNode(n) {
+  if (typeof n === "string") return el("div", { class: "cm" }, n);
+  if (n.kind === "unanswered") return el("div", { class: "cm" },
+    n.time ? el("span", { class: "time" }, n.time) : null, `«${n.text || ""}» — без ответа`);
+  if (n.kind === "msg-issue") return el("div", { class: "cm" },
+    n.time ? el("span", { class: "time" }, n.time) : null, n.text || "");
+  // замечание по звонку: время, направление, итог разговора и сами замечания
+  return el("div", { class: "cm" },
+    el("span", { class: "time" }, `${n.time || ""} ${n.direction === "in" ? "↙ входящий" : "↗ исходящий"}`),
+    n.summary ? ` ${n.summary}` : "",
+    (n.issues || []).length ? el("ul", {}, n.issues.map(x => el("li", {}, x))) : null);
+}
+
 // ── «⋮ → Не ошибка»: отметка конкретного замечания, см. DOWORKS_URL ─────────
 // Пишет в doworks_write, оттуда на следующей сборке отчёта попадает в
-// DATA.doworks (раздел «Доработки», кнопка-жук в шапке). На статистику пока
+// DATA.doworks (раздел «Доработки», кнопка-пчела в шапке). На статистику пока
 // не влияет. Локально (только в этом браузере) запоминаем отправленные —
 // после перезагрузки страницы такие замечания сразу показывают «отправлено»,
 // не дожидаясь пересборки, которая обновит это для всех.
+//
+// «⋮»/«✓» живут в отдельной узкой колонке справа от «Комментария» (см.
+// noteColumn), а не внутри текста замечания — иначе кнопка «уезжала» вниз на
+// многострочных замечаниях. Форма — не inline, а плавающий поповер
+// (position: fixed, через positionPopover), чтобы не растягивать ячейку/строку.
 function noteSummary(n) {
   if (typeof n === "string") return n;
   if (n.kind === "unanswered") return `${n.time ? n.time + " " : ""}«${n.text || ""}» — без ответа`;
@@ -809,27 +826,42 @@ function lastManagerName() {
 function noteFlagKey(n, ctx) {
   return `${ctx.channel}|${ctx.day}|${ctx.studio}|${ctx.phone || ctx.name}|${noteSummary(n)}`.slice(0, 300);
 }
-function noteFlagBlock(n, ctx) {
-  const key = noteFlagKey(n, ctx);
-  const wrap = el("span", { class: "note-flag-wrap" });
-  const showSent = info => {
-    wrap.textContent = "";
-    wrap.append(el("span", { class: "note-sent", title: info.comment }, "✓ отправлено как «не ошибка»"));
-  };
-  const already = doworksSentMap()[key];
-  if (already) { showSent(already); return wrap; }
 
+// Один открытый поповер в любой момент — новый закрывает предыдущий.
+let openNotePopover = null;
+function closeNotePopover() {
+  if (!openNotePopover) return;
+  openNotePopover.remove();
+  openNotePopover = null;
+  document.removeEventListener("mousedown", onNotePopoverOutsideClick);
+  document.removeEventListener("keydown", onNotePopoverEsc);
+}
+function onNotePopoverOutsideClick(e) {
+  if (openNotePopover && !openNotePopover.contains(e.target)) closeNotePopover();
+}
+function onNotePopoverEsc(e) { if (e.key === "Escape") closeNotePopover(); }
+// Ставит поповер рядом с кнопкой: снизу, если влезает, иначе сверху; по
+// горизонтали — зажат в пределах окна, чтобы не вылезал за край на телефоне.
+function positionPopover(pop, btn) {
+  const r = btn.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(10, Math.min(r.left, window.innerWidth - w - 10));
+  const top = r.bottom + h + 6 > window.innerHeight ? Math.max(10, r.top - h - 6) : r.bottom + 6;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
+function openNoteForm(btn, n, ctx) {
+  closeNotePopover();
+  const key = noteFlagKey(n, ctx);
   const nameInput = el("input", { type: "text", placeholder: "Ваше имя", value: lastManagerName() });
   const commentInput = el("textarea", { placeholder: "Комментарий — почему это не ошибка" });
   const err = el("div", { class: "note-err" });
   const submitBtn = el("button", { class: "note-submit", type: "button" }, "Отправить");
   const cancelBtn = el("button", { class: "note-cancel", type: "button" }, "Отмена");
-  const form = el("div", { class: "note-form", hidden: true },
+  const pop = el("div", { class: "note-popover" },
     nameInput, commentInput, err, el("div", { class: "note-form-actions" }, cancelBtn, submitBtn));
-  const btn = el("button", { class: "note-flag", type: "button", title: "Отметить как не ошибку",
-                             "aria-label": "Отметить как не ошибку" }, "⋮");
-  btn.onclick = () => { form.hidden = !form.hidden; if (!form.hidden) nameInput.focus(); };
-  cancelBtn.onclick = () => { form.hidden = true; err.textContent = ""; };
+  cancelBtn.onclick = closeNotePopover;
   submitBtn.onclick = async () => {
     const manager = nameInput.value.trim(), comment = commentInput.value.trim();
     if (!manager) { err.textContent = "Укажите имя"; return; }
@@ -844,27 +876,37 @@ function noteFlagBlock(n, ctx) {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ok") throw new Error(data.message || `Ошибка ${resp.status}`);
       try { localStorage.setItem("fr-cs-manager-name", manager); } catch (e) { /* приватный режим */ }
-      const info = { manager, comment, sentAt: new Date().toISOString(), id: data.id };
-      doworksMarkSent(key, info);
-      showSent(info);
+      doworksMarkSent(key, { manager, comment, sentAt: new Date().toISOString(), id: data.id });
+      closeNotePopover();
+      btn.replaceWith(el("span", { class: "note-sent", title: `${manager}: ${comment}` }, "✓"));
     } catch (e) {
       err.textContent = e.message || "Не получилось отправить, попробуйте ещё раз";
       submitBtn.disabled = false; submitBtn.textContent = "Отправить";
     }
   };
-  wrap.append(btn, form);
-  return wrap;
+  document.body.append(pop);
+  positionPopover(pop, btn);
+  nameInput.focus();
+  openNotePopover = pop;
+  setTimeout(() => {
+    document.addEventListener("mousedown", onNotePopoverOutsideClick);
+    document.addEventListener("keydown", onNotePopoverEsc);
+  }, 0);
 }
 
-function noteNode(n, ctx) {
-  const body = typeof n === "string" ? [n]
-    : n.kind === "unanswered" ? [n.time ? el("span", { class: "time" }, n.time) : null, `«${n.text || ""}» — без ответа`]
-    : n.kind === "msg-issue" ? [n.time ? el("span", { class: "time" }, n.time) : null, n.text || ""]
-    // замечание по звонку: время, направление, итог разговора и сами замечания
-    : [el("span", { class: "time" }, `${n.time || ""} ${n.direction === "in" ? "↙ входящий" : "↗ исходящий"}`),
-       n.summary ? ` ${n.summary}` : "",
-       (n.issues || []).length ? el("ul", {}, n.issues.map(x => el("li", {}, x))) : null];
-  return el("div", { class: "cm" }, ...body, noteFlagBlock(n, ctx));
+function noteIndicator(n, ctx) {
+  const already = doworksSentMap()[noteFlagKey(n, ctx)];
+  if (already) return el("span", { class: "note-sent", title: `${already.manager}: ${already.comment}` }, "✓");
+  const btn = el("button", { class: "note-flag", type: "button", title: "Отметить как не ошибку",
+                             "aria-label": "Отметить как не ошибку" }, "⋮");
+  btn.onclick = () => openNoteForm(btn, n, ctx);
+  return btn;
+}
+// Колонка справа от «Комментария»: по индикатору на каждое замечание строки
+// (обычно одно, иногда несколько) — без видимого разделителя с соседней
+// колонкой, будто просто продолжение таблицы.
+function noteColumn(notes, ctx) {
+  return el("td", { "data-l": "", class: "note-col" }, notes.map(n => noteIndicator(n, ctx)));
 }
 
 const PAGE = 50;
@@ -902,7 +944,7 @@ function peopleCard(ch, days) {
       return;
     }
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
-      el("thead", {}, el("tr", {}, ["Дата", "Студия", "Клиент", "Теги", "Комментарий"].map(h => el("th", {}, h)))),
+      el("thead", {}, el("tr", {}, ["Дата", "Студия", "Клиент", "Теги", "Комментарий", ""].map(h => el("th", {}, h)))),
       el("tbody", {}, shown.slice(0, limit).map(r => el("tr", {},
         el("td", { "data-l": "Дата" }, short(r.day)),
         el("td", { "data-l": "Студия" }, r.studio),
@@ -910,9 +952,8 @@ function peopleCard(ch, days) {
           r.phone && r.name ? el("span", { class: "nm" }, r.name) : null),
         el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => r.tags.has(t))
           .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
-        el("td", { "data-l": "Комментарий", class: "cmt" }, r.notes.length
-          ? r.notes.map(n => noteNode(n, { channel: ch, day: r.day, studio: r.studio, phone: r.phone, name: r.name }))
-          : "—")))))));
+        el("td", { "data-l": "Комментарий", class: "cmt" }, r.notes.length ? r.notes.map(noteNode) : "—"),
+        noteColumn(r.notes, { channel: ch, day: r.day, studio: r.studio, phone: r.phone, name: r.name })))))));
     if (shown.length > limit) {
       body.append(el("button", { class: "more", type: "button", onclick: () => draw(limit + PAGE) },
         `Показать ещё (${shown.length - limit})`));
@@ -1497,7 +1538,7 @@ function adminIssuesCard(r) {
       return;
     }
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
-      el("thead", {}, el("tr", {}, ["Дата", "Канал", "Клиент", "Теги", "Комментарий"].map(h => el("th", {}, h)))),
+      el("thead", {}, el("tr", {}, ["Дата", "Канал", "Клиент", "Теги", "Комментарий", ""].map(h => el("th", {}, h)))),
       el("tbody", {}, shown.map(x => el("tr", {},
         el("td", { "data-l": "Дата" }, short(x.day)),
         el("td", { "data-l": "Канал" }, x.ch === "calls" ? "Звонок" : "Переписка"),
@@ -1505,9 +1546,8 @@ function adminIssuesCard(r) {
           x.phone && x.name ? el("span", { class: "nm" }, x.name) : null),
         el("td", { "data-l": "Теги", class: "tags" }, Object.keys(TAGS).filter(t => x.tags.has(t))
           .map(t => el("span", { class: `tag ${TAGS[t].cls}` }, TAGS[t].label))),
-        el("td", { "data-l": "Комментарий", class: "cmt" }, x.notes.length
-          ? x.notes.map(n => noteNode(n, { channel: x.ch, day: x.day, studio: x.studio, phone: x.phone, name: x.name }))
-          : "—")))))));
+        el("td", { "data-l": "Комментарий", class: "cmt" }, x.notes.length ? x.notes.map(noteNode) : "—"),
+        noteColumn(x.notes, { channel: x.ch, day: x.day, studio: x.studio, phone: x.phone, name: x.name })))))));
   };
   draw();
   return card;
@@ -1621,8 +1661,8 @@ function renderContent() {
 
 function render() { renderTabs(); renderFilters(); renderContent(); }
 
-// ── «Доработки»: список отметок «не ошибка» (DATA.doworks, см. noteFlagBlock
-// выше) — не вкладка, а всплывающая панель по кнопке-жуку в шапке: это
+// ── «Доработки»: список отметок «не ошибка» (DATA.doworks, см. noteColumn
+// выше) — не вкладка, а всплывающая панель по кнопке-пчеле в шапке: это
 // служебный, не основной сценарий страницы.
 function doworksPanel() {
   const items = DATA.doworks || [];

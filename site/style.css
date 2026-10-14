@@ -87,7 +87,7 @@ img.logo { height: 28px; width: auto; display: block; filter: var(--logo-filter)
 .top .title { font-weight: 700; font-size: 15px; }
 .top-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .top .meta { text-align: right; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: pre-line; }
-.bug-btn { font-size: 15px; line-height: 1; padding: 5px 9px; }
+.doworks-icon-btn { font-size: 15px; line-height: 1; padding: 5px 9px; }
 .foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 26px; }
 @media (max-width: 560px) { .top .title { display: none; } }
 .icon-btn {
@@ -263,26 +263,32 @@ table.ppl .cm + .cm { margin-top: 6px; }
 table.ppl .cm .time { color: var(--muted); font-weight: 600; margin-right: 4px; }
 table.ppl ul { margin: 3px 0 0; padding-left: 18px; }
 
-/* «⋮ → Не ошибка»: компактная кнопка у каждого замечания + сворачиваемая
-   мини-форма (имя + обязательный комментарий). Не часть основного сценария —
-   нарочно маленькая и неброская, не таблица и не отдельная вкладка. */
-.note-flag-wrap { display: inline-block; margin-left: 4px; }
+/* «⋮ → Не ошибка»: узкая колонка справа от «Комментария» (noteColumn в
+   app.js) — без видимого разделителя с ней, как будто просто продолжение
+   таблицы. По кнопке на замечание (обычно одна, бывает несколько — тогда
+   в столбик). Форма — не внутри ячейки (.note-popover, position: fixed,
+   см. positionPopover/openNoteForm), не растягивает строку таблицы. */
+table.ppl td.note-col {
+  width: 1%; white-space: nowrap; padding-left: 4px; padding-right: 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
 .note-flag {
   border: 1px solid var(--line); background: var(--card-2); color: var(--muted); border-radius: 6px;
-  width: 20px; height: 18px; line-height: 1; font-size: 12px; cursor: pointer; padding: 0; vertical-align: -3px;
+  width: 20px; height: 18px; line-height: 1; font-size: 12px; cursor: pointer; padding: 0;
 }
 .note-flag:hover { border-color: var(--axis); color: var(--ink-2); }
-.note-form {
-  display: block; margin-top: 6px; padding: 8px; background: var(--card-2); border-radius: 10px;
-  max-width: 320px;
+.note-sent { color: var(--good-ink); font-size: 13px; cursor: help; }
+.note-popover {
+  position: fixed; z-index: 30; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow);
+  border-radius: 12px; padding: 10px; width: 260px; max-width: calc(100vw - 20px);
 }
-.note-form input, .note-form textarea {
+.note-popover input, .note-popover textarea {
   display: block; width: 100%; font-family: inherit; font-size: 13px; padding: 6px 9px; margin-bottom: 6px;
-  border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); outline: none;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); outline: none;
   box-sizing: border-box;
 }
-.note-form input:focus, .note-form textarea:focus { border-color: var(--accent); }
-.note-form textarea { resize: vertical; min-height: 46px; }
+.note-popover input:focus, .note-popover textarea:focus { border-color: var(--accent); }
+.note-popover textarea { resize: vertical; min-height: 54px; }
 .note-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .note-form-actions button {
   border: 0; border-radius: 8px; padding: 5px 11px; font-size: 12px; font-weight: 600; cursor: pointer;
@@ -292,7 +298,9 @@ table.ppl ul { margin: 3px 0 0; padding-left: 18px; }
 .note-submit { background: var(--ink); color: var(--card); }
 .note-submit:disabled { opacity: .6; cursor: progress; }
 .note-err { color: var(--bad-ink); font-size: 12px; margin: -2px 0 6px; }
-.note-sent { color: var(--good-ink); font-size: 12px; margin-left: 4px; cursor: help; }
+@media (max-width: 640px) {
+  table.ppl td.note-col { flex-direction: row; justify-content: flex-start; border-bottom: 0; padding: 2px 4px 0; }
+}
 
 /* ── «Доработки»: модалка со списком отметок «не ошибка» ─────────────────── */
 .modal-overlay {
