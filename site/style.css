@@ -277,7 +277,15 @@ table.ppl td.note-col {
   width: 20px; height: 18px; line-height: 1; font-size: 12px; cursor: pointer; padding: 0;
 }
 .note-flag:hover { border-color: var(--axis); color: var(--ink-2); }
+.note-flag.note-flag-done, .note-flag.note-flag-done:hover {
+  background: var(--good-ink); border-color: var(--good-ink); color: var(--card); cursor: default;
+}
 .note-sent { color: var(--good-ink); font-size: 13px; cursor: help; }
+/* В «Доработках» колонка-действие стоит рядом с текстом «Отметил», а не с
+   узкой ячейкой — без отступа «✓» сливается с ним. В остальных таблицах
+   note-col соседствует с текстом замечания, там отступ не нужен (просили
+   без видимого разделения) — отступ только здесь, в модалке. */
+.modal table.ppl td.note-col { padding-left: 16px; }
 .note-popover {
   position: fixed; z-index: 30; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow);
   border-radius: 12px; padding: 10px; width: 260px; max-width: calc(100vw - 20px);
@@ -317,7 +325,7 @@ table.ppl td.note-col {
 .modal .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 2px; }
 .modal-body { max-height: 70vh; overflow-y: auto; margin-top: 10px; }
 .doworks-orig { font-size: 13px; color: var(--ink-2); }
-.doworks-comment { font-size: 13px; margin-top: 4px; }
+.doworks-comment { font-size: 13px; font-weight: 600; margin-top: 4px; }
 .tag {
   display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
   margin: 0 4px 4px 0; white-space: nowrap;

@@ -1680,7 +1680,11 @@ function doworksResolveAction(r, onRemoved) {
         body: JSON.stringify({ action: "resolve", password, id: r.id, day: r.marked_at.slice(0, 10) }) });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ok") throw new Error(data.message || `Ошибка ${resp.status}`);
-      onRemoved();
+      // Короткая зелёная пауза перед исчезновением — иначе непонятно, сработал
+      // ли клик (строка пропадала бы мгновенно и незаметно).
+      btn.classList.add("note-flag-done");
+      btn.title = "Выполнено";
+      setTimeout(onRemoved, 700);
     } catch (e) {
       btn.disabled = false;
       btn.title = e.message || "Не получилось, попробуйте ещё раз";
