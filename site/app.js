@@ -1661,28 +1661,85 @@ function renderContent() {
 
 function render() { renderTabs(); renderFilters(); renderContent(); }
 
-// ── «Доработки»: список отметок «не ошибка» (DATA.doworks, см. noteColumn
+// ── «Доработки»: таблица отметок «не ошибка» (DATA.doworks, см. noteColumn
 // выше) — не вкладка, а всплывающая панель по кнопке-пчеле в шапке: это
-// служебный, не основной сценарий страницы.
+// служебный, не основной сценарий страницы. «Выполнено» шлёт action=resolve
+// на DOWORKS_URL; на успехе запись убирается из DATA.doworks и перерисовкой
+// панели — чтобы не копить разобранное вечно (со следующей сборки отчёта она
+// и для остальных управляющих пропадёт из payload, см. flatten_doworks).
+const DOWORKS_CH = [["calls", "Звонок"], ["messages", "Переписка"]];
+function doworksResolveAction(r, onRemoved) {
+  const btn = el("button", { class: "note-flag", type: "button", title: "Отметить выполненным",
+                             "aria-label": "Отметить выполненным" }, "✓");
+  btn.onclick = async () => {
+    btn.disabled = true;
+    let password = "";
+    try { password = sessionStorage.getItem("fr-cs") || ""; } catch (e) { /* ничего */ }
+    try {
+      const resp = await fetch(DOWORKS_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resolve", password, id: r.id, day: r.marked_at.slice(0, 10) }) });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.status !== "ok") throw new Error(data.message || `Ошибка ${resp.status}`);
+      onRemoved();
+    } catch (e) {
+      btn.disabled = false;
+      btn.title = e.message || "Не получилось, попробуйте ещё раз";
+    }
+  };
+  return btn;
+}
 function doworksPanel() {
-  const items = DATA.doworks || [];
+  const selCh = new Set();
   const close = () => overlay.remove();
   const onEsc = e => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
-  const list = items.length
-    ? items.map(r => el("div", { class: "doworks-item" },
-        el("div", { class: "doworks-meta" },
-          `${short(r.source.day)} · ${r.source.studio} · ${r.source.channel === "calls" ? "звонок" : "переписка"}`,
-          externalPhoneLink(r.source.channel, r.source.phone) || el("span", {}, r.source.name || "без номера")),
-        r.source.note ? el("div", { class: "doworks-orig" }, `«${r.source.note}»`) : null,
-        el("div", { class: "doworks-comment" }, r.comment),
-        el("div", { class: "doworks-who" }, `${r.manager} · отмечено ${short(r.marked_at)}`)))
-    : [el("div", { class: "empty-box" }, "Пока ничего не отмечено как «не ошибка»")];
+
+  const chips = el("div", { class: "chips", role: "group", "aria-label": "Канал" });
+  const body = el("div", {});
   const overlay = el("div", { class: "modal-overlay", onclick: e => { if (e.target === overlay) close(); } },
-    el("div", { class: "modal" },
+    el("div", { class: "modal modal-wide" },
       el("div", { class: "modal-head" }, el("h2", {}, "Доработки"),
         el("button", { class: "icon-btn", type: "button", "aria-label": "Закрыть", onclick: close }, "✕")),
-      el("p", { class: "cap" }, "Замечания, которые управляющие отметили как «не ошибка», с комментарием."),
-      el("div", { class: "modal-body" }, list)));
+      el("p", { class: "cap" }, "Замечания, отмеченные управляющими как «не ошибка». «Выполнено» — когда разобрались, уйдёт из списка."),
+      el("div", { class: "tools" }, chips),
+      el("div", { class: "modal-body" }, body)));
+
+  const draw = () => {
+    const items = DATA.doworks || [];
+    chips.textContent = "";
+    DOWORKS_CH.forEach(([id, lab]) => {
+      const n = items.filter(r => r.source.channel === id).length;
+      if (!n) return;
+      chips.append(el("button", { type: "button", "aria-pressed": String(selCh.has(id)),
+        onclick: () => { selCh.has(id) ? selCh.delete(id) : selCh.add(id); draw(); } }, lab, el("span", { class: "n" }, String(n))));
+    });
+    const shown = items.filter(r => !selCh.size || selCh.has(r.source.channel));
+    body.textContent = "";
+    if (!shown.length) {
+      body.append(el("div", { class: "empty-box" },
+        items.length ? "Ничего не нашлось" : "Пока ничего не отмечено как «не ошибка»"));
+      return;
+    }
+    body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
+      el("thead", {}, el("tr", {}, ["Дата", "Студия", "Канал", "Клиент", "Что было / комментарий", "Отметил", ""]
+        .map(h => el("th", {}, h)))),
+      el("tbody", {}, shown.map(r => el("tr", {},
+        el("td", { "data-l": "Дата" }, short(r.source.day)),
+        el("td", { "data-l": "Студия" }, r.source.studio),
+        el("td", { "data-l": "Канал" }, r.source.channel === "calls" ? "Звонок" : "Переписка"),
+        el("td", { "data-l": "Клиент", class: "who" },
+          externalPhoneLink(r.source.channel, r.source.phone) || r.source.name || "без номера"),
+        el("td", { "data-l": "Что было / комментарий", class: "cmt" },
+          r.source.note ? el("div", { class: "doworks-orig" }, `«${r.source.note}»`) : null,
+          el("div", { class: "doworks-comment" }, r.comment)),
+        el("td", { "data-l": "Отметил" }, `${r.manager} · ${short(r.marked_at)}`),
+        el("td", { "data-l": "", class: "note-col" }, doworksResolveAction(r, () => {
+          const idx = DATA.doworks.indexOf(r);
+          if (idx >= 0) DATA.doworks.splice(idx, 1);
+          renderDoworksButton();
+          draw();
+        }))))))));
+  };
+  draw();
   document.body.append(overlay);
   document.addEventListener("keydown", onEsc);
 }

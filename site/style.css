@@ -302,7 +302,7 @@ table.ppl td.note-col {
   table.ppl td.note-col { flex-direction: row; justify-content: flex-start; border-bottom: 0; padding: 2px 4px 0; }
 }
 
-/* ── «Доработки»: модалка со списком отметок «не ошибка» ─────────────────── */
+/* ── «Доработки»: модалка-таблица отметок «не ошибка» ─────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(20, 20, 20, .45); display: flex; align-items: flex-start;
   justify-content: center; padding: 8vh 16px; z-index: 20; overflow-y: auto;
@@ -311,15 +311,13 @@ table.ppl td.note-col {
   background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 18px 18px 14px;
   width: 100%; max-width: 560px;
 }
+.modal.modal-wide { max-width: 820px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 2px; }
 .modal-head h2 { margin: 0; font-size: 16px; }
+.modal .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 2px; }
 .modal-body { max-height: 70vh; overflow-y: auto; margin-top: 10px; }
-.doworks-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
-.doworks-item:last-child { border-bottom: 0; }
-.doworks-meta { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
-.doworks-orig { font-size: 13px; color: var(--ink-2); margin-top: 4px; }
+.doworks-orig { font-size: 13px; color: var(--ink-2); }
 .doworks-comment { font-size: 13px; margin-top: 4px; }
-.doworks-who { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .tag {
   display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
   margin: 0 4px 4px 0; white-space: nowrap;
