@@ -124,6 +124,27 @@ function yesterday() { return addDays(DATA.today, -1); }
 const mondayOf = s => { const d = parseDay(s); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return iso(d); };
 const firstOfMonth = s => s.slice(0, 8) + "01";
 
+// Любой месяц на выбор (просьба заказчицы 03.11.2026): «прошлый месяц» каждое
+// 1-е число уезжает вперёд, и до сентября было уже не дотянуться. Такой
+// период хранится как "m:ГГГГ-ММ".
+const MONTHS_NOM = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
+                    "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+const monthOf = p => (/^m:\d{4}-\d{2}$/.test(p || "") ? p.slice(2) : null);
+const prevMonth = m => iso(new Date(+m.slice(0, 4), +m.slice(5, 7) - 2, 15)).slice(0, 7);
+const lastOfMonth = m => iso(new Date(+m.slice(0, 4), +m.slice(5, 7), 0, 12)).slice(0, 10);
+// Месяцы, за которые есть хоть какие-то дневные данные, — новые сверху.
+function dataMonths() {
+  const days = [DATA.conversion.calls, DATA.conversion.messages, DATA.calls, DATA.msgstats || {}].flatMap(Object.keys);
+  const last = yesterday().slice(0, 7);
+  const first = days.length ? days.reduce((a, b) => (a < b ? a : b)).slice(0, 7) : last;
+  const out = [];
+  for (let m = last; m >= first; m = prevMonth(m)) out.push(m);
+  return out;
+}
+// Год — только у месяцев не этого года: «Сентябрь», а в январе — «Декабрь 2026».
+const monthLabel = m => MONTHS_NOM[+m.slice(5, 7) - 1] + (m.slice(0, 4) === yesterday().slice(0, 4) ? "" : ` ${m.slice(0, 4)}`);
+const isMonthly = p => p === "cur_month" || p === "prev_month" || !!monthOf(p);
+
 function periodDays(p = state.period) {
   const end = yesterday();
   if (p === "1d") return [end];
@@ -131,6 +152,8 @@ function periodDays(p = state.period) {
   if (p === "prev_week") { const sun = addDays(mondayOf(end), -1); return dayRange(mondayOf(sun), sun); }
   if (p === "cur_month") return dayRange(firstOfMonth(end), end);
   if (p === "prev_month") { const last = addDays(firstOfMonth(end), -1); return dayRange(firstOfMonth(last), last); }
+  const m = monthOf(p);
+  if (m) { const last = lastOfMonth(m); return dayRange(`${m}-01`, last < end ? last : end); }
   return dayRange(mondayOf(end), end);
 }
 // Сравнение — всегда с полным предыдущим календарным куском (неделей или
@@ -139,7 +162,7 @@ function periodDays(p = state.period) {
 function prevDays(days = periodDays()) {
   const p = state.period;
   if (p === "1d") return [addDays(days[0], -1)];
-  if (p === "cur_month" || p === "prev_month") {
+  if (isMonthly(p)) {
     const last = addDays(firstOfMonth(days[0]), -1);
     return dayRange(firstOfMonth(last), last);
   }
@@ -149,7 +172,7 @@ function prevDays(days = periodDays()) {
 function periodLabel() {
   const p = state.period;
   if (p === "1d") return "к пред. дню";
-  if (p === "cur_month" || p === "prev_month") return "к пред. месяцу";
+  if (isMonthly(p)) return "к пред. месяцу";
   return "к пред. неделе";
 }
 function periodCaption(days = periodDays()) {
@@ -205,6 +228,11 @@ function convTotals(channel, days, studio = state.studio) {
   return t;
 }
 
+// Сколько людей в списке дня. У дней старше DATA.lists_from списков в данных
+// уже нет (файл не раздувается), а их длина осталась рядом — в n_<список>;
+// без этого «не перезвонили» и замечания за старые месяцы стали бы нулями.
+const listLen = (row, key) => (typeof row[`n_${key}`] === "number" ? row[`n_${key}`] : (row[key] || []).length);
+
 const CALL_FIELDS = ["in_total", "in_missed", "in_missed_callback", "in_booked", "out_total", "out_noanswer", "out_booked"];
 function callTotals(days, studio = state.studio) {
   const t = Object.fromEntries(CALL_FIELDS.map(f => [f, 0]));
@@ -216,7 +244,7 @@ function callTotals(days, studio = state.studio) {
     for (const [name, r] of Object.entries(snap.studios || {})) {
       if (studio && name !== studio) continue;
       for (const f of CALL_FIELDS) t[f] += r[f] || 0;
-      t.noCallback += (r.missed_no_callback || []).length;
+      t.noCallback += listLen(r, "missed_no_callback");
     }
   }
   return t;
@@ -722,11 +750,11 @@ function peopleRows(ch, days) {
   let primaryUntracked = false;
   for (const day of [...days].reverse()) {
     const conv = DATA.conversion[ch][day];
-    if (conv && conv.lists_trimmed) trimmed = true;
     if (firstMsgList && day < firstMsgList) untracked = true;
     if (conv && (!firstPrimary || day < firstPrimary)) primaryUntracked = true;
     const cs = ch === "calls" ? DATA.calls[day] : null;
     const ms = ch === "messages" ? (DATA.msgstats || {})[day] : null;
+    if ([conv, cs, ms].some(s => s && s.lists_trimmed)) trimmed = true;
     for (const studio of studioNames()) {
       const byKey = new Map();
       const row = (phone, name) => {
@@ -778,6 +806,11 @@ function peopleRows(ch, days) {
   }
   return { rows: out, trimmed, untracked, firstMsgList, primaryUntracked, firstPrimary };
 }
+// Подпись к спискам людей, когда в периоде есть дни, по которым списков уже
+// нет (старше DATA.lists_from, см. listLen).
+const listsNoteText = () => `Списки по людям есть только ${DATA.lists_from ? `с ${short(DATA.lists_from)}` : "за последние месяцы"}` +
+  " — за более ранние дни остались одни цифры.";
+const emptyPeopleText = (hasRows, trimmed, none) => (hasRows ? "Ничего не нашлось" : trimmed ? listsNoteText() : none);
 
 function noteNode(n) {
   if (typeof n === "string") return el("div", { class: "cm" }, n);
@@ -940,7 +973,7 @@ function peopleCard(ch, days) {
     const shown = searched.filter(r => [...sel].every(t => hasTag(r, t)));
     body.textContent = "";
     if (!shown.length) {
-      body.append(el("div", { class: "empty-box" }, rows.length ? "Ничего не нашлось" : "За этот период никого нет"));
+      body.append(el("div", { class: "empty-box" }, emptyPeopleText(rows.length, trimmed, "За этот период никого нет")));
       return;
     }
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
@@ -961,8 +994,8 @@ function peopleCard(ch, days) {
   };
   search.addEventListener("input", () => { state.query = search.value; draw(); });
   draw();
-  if (trimmed) card.append(el("p", { class: "cap", style: "margin-top:8px" },
-    "Списки хранятся за последние 62 дня, по более ранним дням остались только цифры."));
+  // Пустую таблицу объясняет сама заглушка (emptyPeopleText), подпись — когда обрезана часть периода.
+  if (trimmed && rows.length) card.append(el("p", { class: "cap", style: "margin-top:8px" }, listsNoteText()));
   if (untracked) card.append(el("p", { class: "cap", style: "margin-top:8px" },
     `Без ответа и замечания по людям собираются с ${short(firstMsgList)} — за более ранние дни есть только общая доля, на графике выше.`));
   if (primaryUntracked) card.append(el("p", { class: "cap", style: "margin-top:8px" },
@@ -1141,13 +1174,14 @@ function starsNode(n) {
 function chatRatings(days, studio = state.studio) {
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   const list = [];
-  let networkOnlyDays = 0, perStudioFrom = null;
+  let networkOnlyDays = 0, perStudioFrom = null, trimmed = false;
   for (const day of days) {
     const snap = (DATA.msgstats || {})[day];
     if (!snap) continue;
     const studios = snap.studios || {};
     if (Object.values(studios).some(r => r.rating_counts)) {
       if (!perStudioFrom) perStudioFrom = day;
+      if (snap.lists_trimmed) trimmed = true;          // счёт оценок есть, а кто их ставил — уже нет
       for (const [name, r] of Object.entries(studios)) {
         if (studio && name !== studio) continue;
         for (const [k, n] of Object.entries(r.rating_counts || {})) counts[k] = (counts[k] || 0) + n;
@@ -1158,7 +1192,7 @@ function chatRatings(days, studio = state.studio) {
       for (const [k, n] of Object.entries(snap.rating_counts_network)) counts[k] = (counts[k] || 0) + n;
     }
   }
-  return { counts, list, networkOnlyDays, perStudioFrom };
+  return { counts, list, networkOnlyDays, perStudioFrom, trimmed };
 }
 function ratingSummary(counts) {
   const total = sum(Object.values(counts));
@@ -1309,7 +1343,9 @@ function viewReviews(root) {
         el("td", { "data-l": "Дата" }, `${short(r.day)} ${r.time || ""}`), el("td", { "data-l": "Студия" }, r.studio),
         el("td", { "data-l": "Оценка" }, starsNode(r.rating)), clientCell(r.phone, r.name),
         el("td", { "data-l": "Сообщение", class: "cmt" }, r.text || "—")) }));
-    if (!rows.length) root.append(el("div", { class: "note-box" },
+    if (chat.trimmed) root.append(el("div", { class: "note-box" },
+      `${listsNoteText()} Все оценки за период — в плитках и на графике.`));
+    else if (!rows.length) root.append(el("div", { class: "note-box" },
       "Оценки из переписок по отдельным клиентам сохраняются с 30.09.2026. За более ранние дни есть только общий счёт по сети — он в плитках и на графике."));
   }
 }
@@ -1337,11 +1373,11 @@ function addStudioDay(a, day, studio) {
   const cs = DATA.calls[day], st = ((cs || {}).studios || {})[studio];
   if (st) {
     a.cDays++;
-    a.noCallback += (st.missed_no_callback || []).length;
+    a.noCallback += listLen(st, "missed_no_callback");
     a.cMissed += st.in_missed || 0;
     // Восстановленные задним числом дни (01–24.09) — без разбора разговоров.
     if (cs.source !== "backfill") {
-      a.cIssues += (st.issues || []).length; a.cAnalyzed++;
+      a.cIssues += listLen(st, "issues"); a.cAnalyzed++;
       a.cCalls += (st.in_total || 0) + (st.out_total || 0);
     }
   }
@@ -1502,7 +1538,12 @@ const ADMIN_ISSUE_TAGS = [["primary", "Первичный"], ["unbooked", "Не 
 // тегов — мультивыбор, и работают вместе как «И»: «Звонок» + «Не записался» +
 // «Первичный» одновременно сузят список до строк со всеми тремя признаками.
 function adminIssuesCard(r) {
-  const rowsOf = ch => peopleRows(ch, r.days).rows.filter(x => x.studio === r.studio).map(x => ({ ...x, ch }));
+  let trimmed = false;
+  const rowsOf = ch => {
+    const p = peopleRows(ch, r.days);
+    trimmed = trimmed || p.trimmed;
+    return p.rows.filter(x => x.studio === r.studio).map(x => ({ ...x, ch }));
+  };
   const rows = [...rowsOf("calls"), ...rowsOf("messages")].sort((a, b) => b.day.localeCompare(a.day));
   const selCh = new Set(), selTags = new Set();
   const matches = x => (!selCh.size || selCh.has(x.ch)) && [...selTags].every(t => hasTag(x, t));
@@ -1534,7 +1575,7 @@ function adminIssuesCard(r) {
     const shown = rows.filter(matches);
     body.textContent = "";
     if (!shown.length) {
-      body.append(el("div", { class: "empty-box" }, rows.length ? "Ничего не нашлось" : "За эти смены ошибок и пропусков не найдено"));
+      body.append(el("div", { class: "empty-box" }, emptyPeopleText(rows.length, trimmed, "За эти смены ошибок и пропусков не найдено")));
       return;
     }
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl" },
@@ -1550,6 +1591,7 @@ function adminIssuesCard(r) {
         noteColumn(x.notes, { channel: x.ch, day: x.day, studio: x.studio, phone: x.phone, name: x.name })))))));
   };
   draw();
+  if (trimmed && rows.length) card.append(el("p", { class: "cap", style: "margin-top:8px" }, listsNoteText()));
   return card;
 }
 
@@ -1584,6 +1626,11 @@ function viewAdmins(root) {
   }
   root.append(card);
 
+  // Ранний месяц может начинаться раньше, чем загружен график смен.
+  const outside = days.filter(d => !inShiftRange(d));
+  if (outside.length) root.append(el("div", { class: "note-box" },
+    `График смен из YClients загружен с ${short(shiftData().from)} — ${outside.length} ${plural(outside.length, "день", "дня", "дней")} ` +
+    "этого периода в таблицу не вошли."));
   const gaps = Object.entries(unassigned);
   if (gaps.length) root.append(el("div", { class: "note-box" },
     `Нет администратора в графике YClients: ${gaps.map(([s, n]) => `${s} — ${n} ${plural(n, "день", "дня", "дней")}`).join(", ")}. ` +
@@ -1625,7 +1672,7 @@ function restore() {
     const v = JSON.parse(localStorage.getItem("fr-cs-view") || "{}");
     if (TABS.some(t => t.id === v.tab)) state.tab = v.tab;
     if (!v.studio || DATA.studios.includes(v.studio)) state.studio = v.studio || "";
-    if (PERIODS.some(p => p.id === v.period)) state.period = v.period;
+    if (PERIODS.some(p => p.id === v.period) || dataMonths().includes(monthOf(v.period))) state.period = v.period;
     if (v.reviewsKind === "chat" || v.reviewsKind === "public" || v.reviewsKind === "all") state.reviewsKind = v.reviewsKind;
   } catch (e) { /* по умолчанию */ }
 }
@@ -1641,6 +1688,14 @@ function renderFilters() {
   f.append(el("div", { class: "seg", role: "group", "aria-label": "Период" },
     PERIODS.map(p => el("button", { type: "button", "aria-pressed": String(p.id === state.period),
       onclick: () => { state.period = p.id; save(); render(); } }, p.label))));
+  // Отдельным списком, а не шестой кнопкой: на телефоне ряд периодов листается
+  // вбок, и кнопка в его конце пряталась бы за краем экрана.
+  const cur = monthOf(state.period);
+  const month = el("select", { class: `month${cur ? " on" : ""}`, "aria-label": "Месяц" },
+    el("option", { value: "", disabled: true, selected: !cur }, "Выбрать месяц"),
+    dataMonths().map(m => el("option", { value: m, selected: m === cur }, monthLabel(m))));
+  month.addEventListener("change", () => { state.period = `m:${month.value}`; save(); render(); });
+  f.append(month);
 }
 
 function renderTabs() {

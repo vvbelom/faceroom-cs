@@ -121,6 +121,10 @@ img.logo { height: 28px; width: auto; display: block; filter: var(--logo-filter)
 }
 .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
 .filters .hint { color: var(--muted); font-size: 12px; }
+/* «Выбрать месяц» рядом с периодами: выбранный месяц подсвечен так же, как
+   нажатая кнопка периода (тогда ни одна кнопка не нажата). */
+.filters select.month { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.filters select.month.on { background-color: var(--accent-soft); border-color: transparent; color: var(--accent-ink); font-weight: 700; }
 /* Пять периодов на телефоне в ширину не помещаются — ряд листается пальцем,
    как вкладки, а не раздвигает страницу вбок. */
 .filters .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
