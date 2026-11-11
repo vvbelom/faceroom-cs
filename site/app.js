@@ -606,7 +606,8 @@ function dlButton(filename, getContainer) {
 // своего канала, рядом с остальными цифрами по нему.
 const REASONS = { service: "уточняли по своей записи", confirm: "подтверждали запись",
                   late: "предупреждали об опоздании", feedback: "отвечали на запрос впечатлений",
-                  not_client: "писали не клиенты", other: "обращались не по услугам" };
+                  not_client: "писали не клиенты", other: "обращались не по услугам",
+                  has_booking: "уже были записаны" };
 const CH_COLOR = { calls: "--calls", messages: "--messages" };
 
 function reasonsText(t) {
