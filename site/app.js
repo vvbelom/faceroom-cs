@@ -607,7 +607,8 @@ function dlButton(filename, getContainer) {
 const REASONS = { service: "уточняли по своей записи", confirm: "подтверждали запись",
                   late: "предупреждали об опоздании", feedback: "отвечали на запрос впечатлений",
                   not_client: "писали не клиенты", other: "обращались не по услугам",
-                  has_booking: "уже были записаны" };
+                  has_booking: "уже были записаны", reschedule: "переносили запись",
+                  mailing: "отвечали на рассылку", certificate: "про сертификаты, абонементы, депозит" };
 const CH_COLOR = { calls: "--calls", messages: "--messages" };
 
 function reasonsText(t) {
