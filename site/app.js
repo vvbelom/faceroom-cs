@@ -9,6 +9,13 @@
 "use strict";
 
 let DATA = null;
+// Чья это страница: FaceRoom (по умолчанию) или клиника METOD iki. Подписи и
+// набор разделов приходят в самих данных (payload.org из cs_dashboard/build_data.py),
+// поэтому app.js у обеих страниц один и тот же.
+const ORG_DEFAULT = { id: "faceroom", name: "FaceRoom", all_label: "Вся сеть", doworks: true,
+                      reviews_sources: "YClients и площадки (Яндекс Карты, 2ГИС и др.)" };
+const org = () => Object.assign({}, ORG_DEFAULT, (DATA && DATA.org) || {});
+const allLabel = () => org().all_label;
 const state = { tab: "calls", studio: "", period: "cur_week", query: "",
                 tagFilter: { calls: new Set(), messages: new Set() }, listFilter: {}, reviewsKind: "public", admin: "" };
 
@@ -649,7 +656,7 @@ function convChart(ch) {
   const firstPrimary = firstDayWith(ch, "primary");
   return el("div", { class: "card" },
     el("h2", {}, "Конверсия в запись по дням, %"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · записались из обратившихся · ${periodCaption(cd)}` +
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · записались из обратившихся · ${periodCaption(cd)}` +
       (firstPrimary && firstPrimary > cd[0] ? ` · первичные — с ${short(firstPrimary)}` : "")),
     chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), yMax: 100, fmt: v => `${ruNum(v)}%`,
             aria: `Конверсия ${ch === "calls" ? "звонков" : "переписок"} в запись по дням: все обратившиеся и первичные`,
@@ -658,7 +665,7 @@ function convChart(ch) {
 }
 
 function convByStudio(ch, days, extra) {
-  if (state.studio) return null;
+  if (state.studio || DATA.studios.length < 2) return null;   // у клиники одна «студия» — сравнивать нечего
   // У переписок рядом с конверсией — без ответа и замечания, доля от диалогов.
   const withProblems = ch === "messages";
   const cells = (t, p) => [el("td", {}, frac(t.booked, t.clients)),
@@ -673,7 +680,7 @@ function convByStudio(ch, days, extra) {
     return el("tr", { class: "click", onclick: () => setStudio(s) }, el("td", {}, s), cells(t, p));
   }).filter(Boolean);
   if (!rows.length) return null;
-  rows.push(el("tr", { class: "total" }, el("td", {}, "Вся сеть"), cells(convTotals(ch, days), msgTotals(days))));
+  rows.push(el("tr", { class: "total" }, el("td", {}, allLabel()), cells(convTotals(ch, days), msgTotals(days))));
   const tbl = table(["Студия", "Записались", "Первичные", ...(withProblems ? ["Без ответа", "С замечаниями", "Ответ"] : []), "Не считали"], rows);
   return el("div", { class: "card" },
     el("div", { class: "card-head" }, el("h2", {}, "По студиям"),
@@ -941,6 +948,7 @@ function noteIndicator(n, ctx) {
 // (обычно одно, иногда несколько) — без видимого разделителя с соседней
 // колонкой, будто просто продолжение таблицы.
 function noteColumn(notes, ctx) {
+  if (!org().doworks) return el("td", { "data-l": "", class: "note-col" });   // без «не ошибка» у клиники
   return el("td", { "data-l": "", class: "note-col" }, notes.map(n => noteIndicator(n, ctx)));
 }
 
@@ -953,7 +961,7 @@ function peopleCard(ch, days) {
   const title = "Кто требует внимания";
   card.append(el("div", { class: "card-head" }, el("h2", {}, title),
       dlButton(`${ch === "calls" ? "звонки" : "переписки"}-кто-требует-внимания.csv`, () => body)),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(days)} · строка — человек за день`));
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · ${periodCaption(days)} · строка — человек за день`));
 
   const chips = el("div", { class: "chips", role: "group", "aria-label": "Показать" });
   const search = el("input", { class: "search", type: "search", placeholder: "Телефон, имя, текст",
@@ -1030,7 +1038,7 @@ function viewCalls(root) {
   const val = (d, f) => (DATA.calls[d] ? callTotals([d])[f] : null);
   const callsCard = el("div", { class: "card" },
     el("h2", {}, "Звонки по дням"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · ${periodCaption(cd)}`),
     chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
             aria: "Звонки по дням: входящие, исходящие и первичные",
             series: [{ name: "Входящие", color: "--calls", values: cd.map(d => val(d, "in_total")), fill: true },
@@ -1073,7 +1081,7 @@ function dialogsChart() {
   // каждый вечер, за 06.07–30.09 восстановлен из истории дневной статистики).
   return el("div", { class: "card" },
     el("h2", {}, "Диалоги по дням"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · ${periodCaption(cd)}`),
     chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
             aria: "Диалоги по дням: всего и первичные",
             series: [{ name: "Все диалоги", color: "--messages", values: pt.map(t => (t ? t.n_dialogs : null)), fill: true },
@@ -1087,7 +1095,7 @@ function msgProblemsChart() {
   const count = f => pt.map(t => (t && t.n_dialogs ? `${t[f]} из ${t.n_dialogs}` : null));
   return el("div", { class: "card" },
     el("h2", {}, "Без ответа и замечания по дням, %"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(cd)}`),
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · ${periodCaption(cd)}`),
     chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), fmt: v => `${ruNum(v)}%`,
             aria: "Доля диалогов без ответа и с замечаниями по дням",
             series: [{ name: "⚠ Без ответа", color: "--bad", values: share("n_unanswered"), detail: count("n_unanswered") },
@@ -1101,7 +1109,7 @@ function weeklyDialogsChart(weeks) {
   const tipTitle = i => `Неделя ${weekLabel(weeks[i])}`;
   const at = f => weeks.map(w => { const t = mqTotals(w.studios); return t.n_dialogs ? f(t) : null; });
   return el("div", { class: "card" }, el("h2", {}, "Диалоги по неделям"),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · по неделям`),
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · по неделям`),
     chart({ kind: "line", labels, tipTitle, fmt: ruNum, integer: true, height: 160,
             aria: "Диалоги по неделям: всего и первичные",
             series: [{ name: "Все диалоги", color: "--messages", values: at(t => t.n_dialogs), fill: true },
@@ -1151,7 +1159,7 @@ function viewMessages(root) {
     root.append(el("div", { class: "subgroup" }, "По неделям · долгосрочный тренд"));
     const series = f => weeks.map(w => { const t = mqTotals(w.studios); return t.n_dialogs ? f(t) : null; });
     const respChart = el("div", { class: "card" }, el("h2", {}, "Время ответа по неделям, мин"),
-      el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · по неделям`),
+      el("p", { class: "cap" }, `${state.studio || allLabel()} · по неделям`),
       chart({ kind: "line", labels: weeks.map(w => short(w.start)), tipTitle: i => `Неделя ${weekLabel(weeks[i])}`,
               fmt: ruNum, height: 160, aria: "Время ответа по неделям",
               series: [{ name: "минут", color: "--calls", values: series(t => t.respMin) }] }));
@@ -1282,7 +1290,7 @@ function viewReviews(root) {
 
   // По дням — окно следует за периодом сверху, как в «Звонках»/«Перепиках».
   const cd = chartDays();
-  const dailyCap = `${state.studio || "Вся сеть"} · ${periodCaption(cd)}${studioNote}`;
+  const dailyCap = `${state.studio || allLabel()} · ${periodCaption(cd)}${studioNote}`;
   root.append(el("div", { class: "subgroup" }, "По дням"));
   root.append(el("div", { class: "grid2" },
     el("div", { class: "card" }, el("h2", {}, `${what} по дням`), el("p", { class: "cap" }, dailyCap),
@@ -1299,7 +1307,7 @@ function viewReviews(root) {
   const lastMon = mondayOf(yesterday());
   const weeks = Array.from({ length: 12 }, (_, i) => addDays(lastMon, -7 * (11 - i)));
   const weekDays = w => dayRange(w, addDays(w, 6));
-  const weeksCap = `${state.studio || "Вся сеть"} · последние 12 недель${studioNote}`;
+  const weeksCap = `${state.studio || allLabel()} · последние 12 недель${studioNote}`;
   root.append(el("div", { class: "subgroup" }, "По неделям · долгосрочный тренд"));
   root.append(el("div", { class: "grid2" },
     el("div", { class: "card" }, el("h2", {}, `${what} по неделям`), el("p", { class: "cap" }, weeksCap),
@@ -1322,7 +1330,7 @@ function viewReviews(root) {
 
   if (state.reviewsKind !== "chat") {
     root.append(listCard({ id: "public", title: "Публичные отзывы",
-      cap: `${state.studio || "Вся сеть"} · ${periodCaption(days)} · YClients и площадки (Яндекс Карты, 2ГИС и др.)`,
+      cap: `${state.studio || allLabel()} · ${periodCaption(days)} · ${org().reviews_sources}`,
       head: ["Дата", "Студия", "Откуда", "Оценка", "Клиент", "Отзыв"], rows: pub,
       chips: [["all", "Все", () => true], ["neg", "1–3★", isNeg], ...textChips,
               ...sources.map(s => [`src:${s}`, s, r => r.source === s])],
@@ -1337,7 +1345,7 @@ function viewReviews(root) {
   if (state.reviewsKind !== "public") {
     const rows = chat.list.sort((a, b) => (b.day + b.time).localeCompare(a.day + a.time));
     root.append(listCard({ id: "chat", title: "Оценки визитов из переписок",
-      cap: `${state.studio || "Вся сеть"} · ${periodCaption(days)} · ответ клиента на запрос оценки и что он дописал в течение часа`,
+      cap: `${state.studio || allLabel()} · ${periodCaption(days)} · ответ клиента на запрос оценки и что он дописал в течение часа`,
       head: ["Дата", "Студия", "Оценка", "Клиент", "Сообщение"], rows,
       chips: [["all", "Все", () => true], ["neg", "1–3★", isNeg], ...commentChips],
       hay: r => `${r.phone} ${r.name} ${r.text} ${r.studio}`,
@@ -1609,7 +1617,7 @@ function viewAdmins(root) {
   const body = el("div", {});
   card.append(el("div", { class: "card-head" }, el("h2", {}, "Администраторы"),
       dlButton("администраторы.csv", () => body)),
-    el("p", { class: "cap" }, `${state.studio || "Вся сеть"} · ${periodCaption(days)} · смены по графику YClients · нажмите на строку — личная динамика`),
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · ${periodCaption(days)} · смены по графику YClients · нажмите на строку — личная динамика`),
     body);
   if (!rows.length) {
     body.append(el("div", { class: "empty-box" }, "В графике YClients за этот период нет смен администраторов"));
@@ -1622,7 +1630,7 @@ function viewAdmins(root) {
                          if (state.admin) $("#admin-trend")?.scrollIntoView({ behavior: "smooth", block: "start" }); } },
       el("td", { "data-l": "Администратор", class: "who" }, personName(r.who), el("span", { class: "nm" }, r.studio)),
       adminCells(r.acc, net)));
-    tr.push(el("tr", { class: "total" }, el("td", { "data-l": "", class: "who" }, state.studio || "Вся сеть",
+    tr.push(el("tr", { class: "total" }, el("td", { "data-l": "", class: "who" }, state.studio || allLabel(),
       el("span", { class: "nm" }, "все дни, для сравнения")), adminCells(total, net)));
     body.append(el("div", { class: "tbl-wrap" }, el("table", { class: "ppl adm" }, adminHead(), el("tbody", {}, tr))));
   }
@@ -1646,13 +1654,14 @@ function viewAdmins(root) {
     root.append(adminTrend(sel));
     root.append(adminIssuesCard(sel));
   }
+  const single = DATA.studios.length < 2;    // клиника: одна «студия», сравнение — с ней же целиком
   root.append(el("div", { class: "note-box" },
-    "Звонки и переписки считаются по студии за день, поэтому день приписывается администратору, который стоит в графике " +
+    `Звонки и переписки считаются по ${single ? "клинике" : "студии"} за день, поэтому день приписывается администратору, который стоит в графике ` +
     "работы YClients (Филиал → Настройки → График работы). Если в графике двое — день засчитан обоим («вдвоём»). " +
     "Замечания по звонкам — разговоры, где модель нашла ошибки администратора, в процентах от звонков за дни с разбором. " +
-    "Строка «Вся сеть» или студии — все дни периода, для сравнения. " +
-    `⚠ — показатель заметно хуже среднего по всей сети (${WARN_PP} п.п. и больше для долей, ${WARN_RESP_MIN} мин и больше ` +
-    "для времени ответа) — сравнение всегда со всей сетью, даже если выше выбрана одна студия."));
+    `Строка «${allLabel()}»${single ? "" : " или студии"} — все дни периода, для сравнения. ` +
+    `⚠ — показатель заметно хуже среднего ${single ? "по клинике" : "по всей сети"} (${WARN_PP} п.п. и больше для долей, ${WARN_RESP_MIN} мин и больше ` +
+    (single ? "для времени ответа)." : "для времени ответа) — сравнение всегда со всей сетью, даже если выше выбрана одна студия.")));
 }
 
 // ── Каркас ─────────────────────────────────────────────────────────────────
@@ -1683,10 +1692,10 @@ function renderFilters() {
   const f = $("#filters");
   f.textContent = "";
   const sel = el("select", { "aria-label": "Студия" },
-    el("option", { value: "" }, "Вся сеть"),
+    el("option", { value: "" }, allLabel()),
     DATA.studios.map(s => el("option", { value: s, selected: s === state.studio }, s)));
   sel.addEventListener("change", () => setStudio(sel.value));
-  f.append(sel);
+  if (DATA.studios.length > 1) f.append(sel);    // у клиники одна «студия» — выбирать нечего
   f.append(el("div", { class: "seg", role: "group", "aria-label": "Период" },
     PERIODS.map(p => el("button", { type: "button", "aria-pressed": String(p.id === state.period),
       onclick: () => { state.period = p.id; save(); render(); } }, p.label))));
@@ -1807,7 +1816,8 @@ function doworksPanel() {
 function renderDoworksButton() {
   const btn = $("#doworks-btn");
   const n = (DATA.doworks || []).length;
-  btn.hidden = false;
+  btn.hidden = !org().doworks;                   // «Пчёлка» — только у FaceRoom
+  if (btn.hidden) return;
   btn.title = n ? `Доработки (${n})` : "Доработки";
   btn.onclick = doworksPanel;
 }
