@@ -1262,14 +1262,22 @@ function viewReviews(root) {
            sub: `${plural(cs.total, "оценка", "оценки", "оценок")} визитов${chatNote}` }),
     tile({ label: "Из переписок — средняя оценка", value: cs.avg === null ? "—" : ruNum(cs.avg) }),
     tile({ label: "Из переписок — негативные", key: "--bad", value: String(cs.neg), sub: "1–3★" })));
+  // Оценки визитов из личного кабинета (просьба заказчицы 26.11.2026: «в раздел отзывы (не публичные),
+  // отдельно отфильтровать, что это из лк») — клиент отвечает в кабинете на «Как вам …?» после визита.
+  const lkr = lkRatings(days), lks = ratingSummary(lkr.counts);
+  if (lkData()) root.append(el("div", { class: "tiles three" },
+    tile({ label: "Из кабинета — количество", value: String(lks.total), sub: `${plural(lks.total, "оценка", "оценки", "оценок")} визитов в личном кабинете` }),
+    tile({ label: "Из кабинета — средняя оценка", value: lks.avg === null ? "—" : ruNum(lks.avg) }),
+    tile({ label: "Из кабинета — негативные", key: "--bad", value: String(lks.neg), sub: "1–3★" })));
 
+  const kinds = [["all", "Все"], ["public", "Публичные"], ["chat", "Из переписок"], ...(lkData() ? [["lk", "Из кабинета"]] : [])];
   root.append(el("div", { class: "seg kind", role: "group", "aria-label": "Вид отзывов" },
-    [["all", "Все"], ["public", "Публичные"], ["chat", "Из переписок"]].map(([k, lab]) => el("button", { type: "button",
+    kinds.map(([k, lab]) => el("button", { type: "button",
       "aria-pressed": String(state.reviewsKind === k), onclick: () => { state.reviewsKind = k; save(); renderContent(); } }, lab))));
 
   // Считалки по произвольному набору дней — используются и для дневного
   // окна (chartDays), и для недельных вёдер (weekDays) ниже. «Все» —
-  // публичные и из переписок складываются в одни и те же 1–5★.
+  // публичные, из переписок и из кабинета складываются в одни и те же 1–5★.
   function pubRatingCounts(ds) {
     const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     for (const r of DATA.reviews) if (ds.includes(r.date) && (!state.studio || r.studio === state.studio) && r.stars) counts[r.stars]++;
@@ -1278,13 +1286,15 @@ function viewReviews(root) {
   function reviewCounts(ds) {
     if (state.reviewsKind === "chat") return chatRatings(ds).counts;
     if (state.reviewsKind === "public") return pubRatingCounts(ds);
-    const a = pubRatingCounts(ds), b = chatRatings(ds).counts, out = {};
-    for (const k of [1, 2, 3, 4, 5]) out[k] = (a[k] || 0) + (b[k] || 0);
+    if (state.reviewsKind === "lk") return lkRatings(ds).counts;
+    const a = pubRatingCounts(ds), b = chatRatings(ds).counts, c = lkRatings(ds).counts, out = {};
+    for (const k of [1, 2, 3, 4, 5]) out[k] = (a[k] || 0) + (b[k] || 0) + (c[k] || 0);
     return out;
   }
   const reviewBucket = (ds, good) => { const c = reviewCounts(ds); return good ? c[4] + c[5] : c[1] + c[2] + c[3]; };
   const reviewAvg = ds => ratingSummary(reviewCounts(ds)).avg;
   const what = state.reviewsKind === "chat" ? "Оценки визитов из переписок"
+    : state.reviewsKind === "lk" ? "Оценки визитов из кабинета"
     : state.reviewsKind === "public" ? "Публичные отзывы" : "Все отзывы";
   const studioNote = state.reviewsKind !== "public" && state.studio ? " · по студиям оценки из переписок сохраняются с 30.09, раньше — только по сети" : "";
 
@@ -1328,7 +1338,7 @@ function viewReviews(root) {
   const hasComment = r => !!(r.text && r.text.trim().length >= 5);
   const commentChips = [["text", "С текстом", hasComment], ["notext", "Без текста", r => !hasComment(r)]];
 
-  if (state.reviewsKind !== "chat") {
+  if (state.reviewsKind === "all" || state.reviewsKind === "public") {
     root.append(listCard({ id: "public", title: "Публичные отзывы",
       cap: `${state.studio || allLabel()} · ${periodCaption(days)} · ${org().reviews_sources}`,
       head: ["Дата", "Студия", "Откуда", "Оценка", "Клиент", "Отзыв"], rows: pub,
@@ -1342,7 +1352,21 @@ function viewReviews(root) {
         el("td", { "data-l": "Отзыв", class: "cmt" }, r.text || "без текста",
           r.specialist ? el("div", { class: "sp" }, `мастер: ${r.specialist}`) : null)) }));
   }
-  if (state.reviewsKind !== "public") {
+  if (lkData() && (state.reviewsKind === "all" || state.reviewsKind === "lk")) {
+    const rows = lkr.list.slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+    root.append(listCard({ id: "lk", title: "Оценки визитов из личного кабинета",
+      cap: `${state.studio || allLabel()} · ${periodCaption(days)} · клиент ответил в кабинете на «Как вам …?» после визита`,
+      head: ["Дата", "Студия", "Оценка", "Клиент", "Визит"], rows,
+      chips: [["all", "Все", () => true], ["neg", "1–3★", isNeg]],
+      hay: r => `${r.phone} ${r.name} ${r.service} ${r.expert} ${r.studio}`,
+      render: r => el("tr", { class: isNeg(r) ? "neg" : "" },
+        el("td", { "data-l": "Дата" }, `${short(r.date)} ${r.time || ""}`), el("td", { "data-l": "Студия" }, r.studio),
+        el("td", { "data-l": "Оценка" }, starsNode(r.rating)), clientCell(r.phone, r.name),
+        el("td", { "data-l": "Визит", class: "cmt" }, r.service || "—",
+          r.expert || r.visit_date ? el("div", { class: "sp" },
+            [r.expert ? `эксперт: ${r.expert}` : "", r.visit_date ? `визит ${short(r.visit_date)}` : ""].filter(Boolean).join(" · ")) : null)) }));
+  }
+  if (state.reviewsKind === "all" || state.reviewsKind === "chat") {
     const rows = chat.list.sort((a, b) => (b.day + b.time).localeCompare(a.day + a.time));
     root.append(listCard({ id: "chat", title: "Оценки визитов из переписок",
       cap: `${state.studio || allLabel()} · ${periodCaption(days)} · ответ клиента на запрос оценки и что он дописал в течение часа`,
@@ -1664,13 +1688,181 @@ function viewAdmins(root) {
     (single ? "для времени ответа)." : "для времени ответа) — сравнение всегда со всей сетью, даже если выше выбрана одна студия.")));
 }
 
+// ── Раздел «Личный кабинет» ────────────────────────────────────────────────
+// Просьба заказчицы 26.11.2026: сводка по кабинету клиентов и как эксперты
+// заполняют карточки рекомендаций («вчера было 10 чел в студии, из них
+// заполнены карточки у 4 = 40%, за месяц было 100 чел, заполнено 35 карточек
+// = 35%»). Цифры считает сам кабинет (репозиторий faceroom_lk, Cabinet\CsReport),
+// по дням и студиям:
+//   пришли — разные клиенты с визитом «клиент пришёл» в YClients;
+//   карточка на визите — эксперт заполнил карточку рекомендаций к этому визиту;
+//   с карточкой — карточка с этого или прошлого визита (не старше
+//     lk.with_card_days дней): клиенту посреди курса новую карточку не заполняют;
+// то же по экспертам — сотрудникам записей. Клиент, который за день был у двух
+// сотрудников, засчитан каждому, поэтому сумма по экспертам бывает больше студии.
+// Активные клиенты кабинета считаются только по сети — разными людьми за день,
+// неделю или месяц (готовыми числами из кабинета: сложить дни нельзя).
+const lkData = () => DATA.lk || null;
+const LK_EXPERTS_PAGE = 30;
+
+function lkTotals(days, studio = state.studio) {
+  const t = { visits: 0, cards: 0, withCard: 0, regs: 0, daysWithData: 0, experts: new Map() };
+  for (const day of days) {
+    const snap = (lkData().days || {})[day];
+    if (!snap) continue;
+    t.daysWithData++;
+    if (!studio) t.regs += snap.registrations || 0;       // по сети — и те, кого нет в YClients
+    for (const [name, r] of Object.entries(snap.studios || {})) {
+      if (studio && name !== studio) continue;
+      t.visits += r.visits || 0; t.cards += r.cards || 0; t.withCard += r.with_card || 0;
+      if (studio) t.regs += r.registrations || 0;
+      for (const [id, e] of Object.entries(r.experts || {})) {
+        const key = `${name}|${id}`;
+        if (!t.experts.has(key)) t.experts.set(key, { studio: name, name: e.name || "без имени", visits: 0, cards: 0, withCard: 0 });
+        const a = t.experts.get(key);
+        a.visits += e.visits || 0; a.cards += e.cards || 0; a.withCard += e.with_card || 0;
+      }
+    }
+  }
+  return t;
+}
+
+// Активные за период — готовым числом из кабинета: день, неделя (с понедельника)
+// или месяц. Другие наборы дней (окно графика) так не посчитать — null.
+function lkActive(days) {
+  const a = lkData().active || {};
+  if (days.length === 1) return (a.day || {})[days[0]] ?? null;
+  const last = days[days.length - 1];
+  if (days[0] === mondayOf(days[0]) && mondayOf(last) === days[0]) return (a.week || {})[days[0]] ?? null;
+  if (days[0] === firstOfMonth(days[0]) && last.slice(0, 7) === days[0].slice(0, 7)) return (a.month || {})[days[0].slice(0, 7)] ?? null;
+  return null;
+}
+
+function lkRatings(days, studio = state.studio) {
+  const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const list = [];
+  if (!lkData()) return { counts, list };
+  const from = days[0], to = days[days.length - 1];
+  for (const r of lkData().ratings || []) {
+    if (r.date < from || r.date > to || (studio && r.studio !== studio)) continue;
+    counts[r.rating] = (counts[r.rating] || 0) + 1;
+    list.push(r);
+  }
+  return { counts, list };
+}
+
+function lkCells(t) {
+  return [el("td", { "data-l": "Пришли" }, t.visits ? String(t.visits) : "—"),
+    el("td", { "data-l": "Карточка на визите" }, frac(t.cards, t.visits)),
+    el("td", { "data-l": "С карточкой" }, frac(t.withCard, t.visits))];
+}
+
+function viewLk(root) {
+  const lk = lkData();
+  if (!lk) {
+    root.append(el("div", { class: "empty-box" }, "Данных личного кабинета пока нет — раздел заполнится со следующим обновлением."));
+    return;
+  }
+  const days = periodDays(), before = prevDays(days), label = periodLabel();
+  const t = lkTotals(days), tb = lkTotals(before);
+  const active = lkActive(days), activeBefore = lkActive(before);
+  const rt = lkRatings(days), rs = ratingSummary(rt.counts);
+  const since = lk.since && lk.since > days[0] ? ` · считаются с ${short(lk.since)}` : "";
+  root.append(el("div", { class: "tiles six" },
+    tile({ label: "Пришли в студии", key: "--calls", value: t.daysWithData ? String(t.visits) : "—",
+           sub: t.daysWithData ? `разные клиенты за каждый день${since}` : "нет данных",
+           delta: { now: t.visits, before: tb.daysWithData ? tb.visits : null, unit: "pct", better: "up", label } }),
+    tile({ label: "Карточка на визите", key: "--accent", value: fmtPct(pct(t.cards, t.visits)),
+           sub: t.visits ? `${t.cards} из ${t.visits} — заполнена к этому визиту` : "нет данных",
+           delta: { now: pct(t.cards, t.visits), before: tb.visits ? pct(tb.cards, tb.visits) : null, unit: "pp", better: "up", label } }),
+    tile({ label: "С карточкой", key: "--primary", value: fmtPct(pct(t.withCard, t.visits)),
+           sub: t.visits ? `${t.withCard} из ${t.visits} — в том числе с прошлых визитов курса` : "нет данных",
+           delta: { now: pct(t.withCard, t.visits), before: tb.visits ? pct(tb.withCard, tb.visits) : null, unit: "pp", better: "up", label } }),
+    tile({ label: "Регистрации в кабинете", value: t.daysWithData ? String(t.regs) : "—",
+           sub: state.studio ? "студия — по первой карточке клиента в YClients" : "новые клиенты кабинета",
+           delta: { now: t.regs, before: tb.daysWithData ? tb.regs : null, unit: "pct", better: "up", label } }),
+    tile({ label: "Активные в кабинете", value: active === null ? "—" : String(active),
+           sub: active === null ? "нет данных" : `${plural(active, "клиент заходил", "клиента заходили", "клиентов заходили")} · по всей сети`,
+           delta: { now: active, before: activeBefore, unit: "pct", better: "up", label } }),
+    tile({ label: "Оценки из кабинета", value: String(rs.total),
+           sub: rs.total ? `средняя ${ruNum(rs.avg)} · 1–3★: ${rs.neg}` : "оценок визитов нет" })));
+
+  const cd = chartDays();
+  const at = d => ((lk.days || {})[d] ? lkTotals([d]) : null);
+  const totals = cd.map(at);
+  const share = (num) => totals.map(x => (x && x.visits ? pct(x[num], x.visits) : null));
+  const detail = (num) => totals.map(x => (x && x.visits ? `${x[num]} из ${x.visits}` : null));
+  const cap = `${state.studio || allLabel()} · ${periodCaption(cd)}`;
+  root.append(el("div", { class: "grid2" },
+    el("div", { class: "card" }, el("h2", {}, "Карточки рекомендаций по дням, %"),
+      el("p", { class: "cap" }, `${cap} · от пришедших в студию`),
+      chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), yMax: 100, fmt: v => `${ruNum(v)}%`,
+              aria: "Доля пришедших с карточкой рекомендаций по дням: на визите и с карточкой с прошлых визитов",
+              series: [{ name: "Карточка на визите", color: "--accent", values: share("cards"), detail: detail("cards") },
+                       { name: "С карточкой", color: "--primary", values: share("withCard"), detail: detail("withCard"), dash: true }] })),
+    el("div", { class: "card" }, el("h2", {}, "Пришли и карточки по дням"), el("p", { class: "cap" }, cap),
+      chart({ kind: "line", labels: cd.map(short), tipTitle: i => longDay(cd[i]), integer: true,
+              aria: "Пришли в студию и карточки на визите по дням",
+              series: [{ name: "Пришли", color: "--calls", values: totals.map(x => (x ? x.visits : null)), fill: true },
+                       { name: "Карточка на визите", color: "--accent", values: totals.map(x => (x ? x.cards : null)) }] }))));
+
+  if (!state.studio && DATA.studios.length > 1) {
+    const rows = DATA.studios.map(s => {
+      const st = lkTotals(days, s);
+      if (!st.visits && !st.regs) return null;
+      return el("tr", { class: "click", onclick: () => setStudio(s) }, el("td", {}, s), lkCells(st),
+        el("td", { "data-l": "Регистрации" }, String(st.regs || "—")));
+    }).filter(Boolean);
+    if (rows.length) {
+      const studioRegs = sum(DATA.studios.map(s => lkTotals(days, s).regs));
+      rows.push(el("tr", { class: "total" }, el("td", {}, allLabel()), lkCells(t), el("td", {}, String(studioRegs || "—"))));
+      const tbl = table(["Студия", "Пришли", "Карточка на визите", "С карточкой", "Регистрации"], rows);
+      root.append(el("div", { class: "card" },
+        el("div", { class: "card-head" }, el("h2", {}, "По студиям"), dlButton("личный-кабинет-по-студиям.csv", () => tbl)),
+        el("p", { class: "cap" }, `${periodCaption(days)} · нажмите на студию, чтобы посмотреть её экспертов`), tbl));
+    }
+  }
+
+  // Экспертов по сети — десятки: сначала самые загруженные, остальные — «Показать ещё»; CSV — всех.
+  const experts = [...t.experts.values()].filter(e => e.visits > 0)
+    .sort((a, b) => b.visits - a.visits || a.name.localeCompare(b.name, "ru"));
+  const expertsTable = list => table(["Эксперт", "Студия", "Пришли", "Карточка на визите", "С карточкой"], list.map(e => el("tr", {},
+    el("td", { "data-l": "Эксперт", class: "who" }, e.name), el("td", { "data-l": "Студия" }, e.studio), lkCells(e))));
+  const expertsBox = el("div", {});
+  const drawExperts = limit => {
+    expertsBox.textContent = "";
+    if (!experts.length) { expertsBox.append(el("div", { class: "empty-box" }, "За этот период визитов нет")); return; }
+    expertsBox.append(expertsTable(experts.slice(0, limit)));
+    if (experts.length > limit) expertsBox.append(el("button", { class: "more", type: "button", onclick: () => drawExperts(limit + LK_EXPERTS_PAGE) },
+      `Показать ещё (${experts.length - limit})`));
+  };
+  drawExperts(LK_EXPERTS_PAGE);
+  root.append(el("div", { class: "card" },
+    el("div", { class: "card-head" }, el("h2", {}, "По экспертам"),
+      experts.length ? dlButton("личный-кабинет-по-экспертам.csv", () => expertsTable(experts)) : null),
+    el("p", { class: "cap" }, `${state.studio || allLabel()} · ${periodCaption(days)} · сотрудник записи в YClients`), expertsBox));
+
+  const pending = Object.entries(lk.pending || {}).filter(([s]) => !state.studio || s === state.studio);
+  if (pending.length) root.append(el("div", { class: "note-box" },
+    `Визиты из YClients ещё догружаются: ${pending.map(([s, ds]) => `${s} — ${ds.length} ${plural(ds.length, "день", "дня", "дней")}`).join(", ")}. ` +
+    "За эти дни «пришли» пока неполные — цифры появятся со следующим обновлением."));
+  root.append(el("div", { class: "note-box" },
+    "«Пришли» — разные клиенты с визитом «клиент пришёл» в YClients за день. «Карточка на визите» — эксперт заполнил карточку " +
+    `рекомендаций к визиту этого дня. «С карточкой» — у клиента есть карточка с этого или прошлого визита не старше ${lk.with_card_days || 120} дней: ` +
+    "клиенту посреди курса новую карточку обычно не заполняют. По экспертам — сотрудник записи; клиент, который за день был у двух сотрудников, " +
+    "засчитан каждому. Регистрации и активные — личный кабинет клиентов; оценки визитов из кабинета — ещё и в разделе «Отзывы»."));
+}
+
 // ── Каркас ─────────────────────────────────────────────────────────────────
+// when — раздел есть не у всех: «Личный кабинет» — только когда в данных есть кабинет (у FaceRoom).
 const TABS = [
   { id: "calls", label: "Звонки", view: viewCalls },
   { id: "messages", label: "Переписки", view: viewMessages },
   { id: "reviews", label: "Отзывы", view: viewReviews },
   { id: "admins", label: "Администраторы", view: viewAdmins },
+  { id: "lk", label: "Личный кабинет", view: viewLk, when: () => !!lkData() },
 ];
+const tabsOn = () => TABS.filter(t => !t.when || t.when());
 
 function setStudio(s) { state.studio = s; save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 function save() {
@@ -1681,10 +1873,11 @@ function save() {
 function restore() {
   try {
     const v = JSON.parse(localStorage.getItem("fr-cs-view") || "{}");
-    if (TABS.some(t => t.id === v.tab)) state.tab = v.tab;
+    if (tabsOn().some(t => t.id === v.tab)) state.tab = v.tab;
     if (!v.studio || DATA.studios.includes(v.studio)) state.studio = v.studio || "";
     if (PERIODS.some(p => p.id === v.period) || dataMonths().includes(monthOf(v.period))) state.period = v.period;
-    if (v.reviewsKind === "chat" || v.reviewsKind === "public" || v.reviewsKind === "all") state.reviewsKind = v.reviewsKind;
+    if (v.reviewsKind === "chat" || v.reviewsKind === "public" || v.reviewsKind === "all"
+        || (v.reviewsKind === "lk" && lkData())) state.reviewsKind = v.reviewsKind;
   } catch (e) { /* по умолчанию */ }
 }
 
@@ -1712,7 +1905,7 @@ function renderFilters() {
 function renderTabs() {
   const t = $("#tabs");
   t.textContent = "";
-  TABS.forEach(tab => t.append(el("button", { class: "tab", role: "tab", type: "button",
+  tabsOn().forEach(tab => t.append(el("button", { class: "tab", role: "tab", type: "button",
     "aria-selected": String(tab.id === state.tab),
     onclick: () => { state.tab = tab.id; save(); render(); } }, tab.label)));
 }
@@ -1721,11 +1914,14 @@ function renderContent() {
   charts = [];
   const root = $("#content");
   root.textContent = "";
-  TABS.find(t => t.id === state.tab).view(root);
+  (tabsOn().find(t => t.id === state.tab) || TABS[0]).view(root);
   charts.forEach(f => f());
 }
 
-function render() { renderTabs(); renderFilters(); renderContent(); }
+function render() {
+  if (!tabsOn().some(t => t.id === state.tab)) state.tab = tabsOn()[0].id;   // раздела нет в этих данных
+  renderTabs(); renderFilters(); renderContent();
+}
 
 // ── «Доработки»: таблица отметок «не ошибка» (DATA.doworks, см. noteColumn
 // выше) — не вкладка, а всплывающая панель по кнопке-пчеле в шапке: это
